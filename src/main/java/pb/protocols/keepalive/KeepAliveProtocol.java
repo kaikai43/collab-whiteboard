@@ -59,7 +59,7 @@ public class KeepAliveProtocol extends Protocol implements IRequestReplyProtocol
 	 * replyReceived = indication if client received reply from server for previous round
 	 * requestReceived = indication if server received request from client for previous round
 	 */
-	private boolean replyReceived = false;
+	private boolean replyReceived = true;
 	private boolean requestReceived = true;
 
 	/**
@@ -71,16 +71,11 @@ public class KeepAliveProtocol extends Protocol implements IRequestReplyProtocol
 	}
 
 	/**
-	 * Signal the protocol to stop. More specifically this method
-	 * is called when the protocol should not undertake any more
-	 * actions, such as processing messages or sending messages.
-	 *
 	 * Protocol stops when a timeout occurs
 	 */
 	@Override
 	public void stopProtocol() {
-		manager.endpointTimedOut(endpoint, this);
-		Utils.getInstance().cleanUp();
+		log.severe("protocol stopped due to timeout");
 	}
 	
 	/*
@@ -92,7 +87,7 @@ public class KeepAliveProtocol extends Protocol implements IRequestReplyProtocol
 	 */
 	public void startAsServer() {
 		// Start a 20s client timeout timer
-		checkClientTimeout();
+		//checkClientTimeout();
 	}
 	
 	/**
@@ -102,7 +97,7 @@ public class KeepAliveProtocol extends Protocol implements IRequestReplyProtocol
 		if (requestReceived) {
 			requestReceived = false;
 		} else {
-			stopProtocol();
+			manager.endpointTimedOut(endpoint, this);
 		}
 	}
 	
@@ -113,6 +108,13 @@ public class KeepAliveProtocol extends Protocol implements IRequestReplyProtocol
 		// Send request and start 2 20s timers: 1 for server reply and 1 for sending KeepAliveRequest
 		sendRequest(new KeepAliveRequest());
 
+		// DEMO timeout function
+		// TODO delete during submission
+		Utils.getInstance().setTimeout(() -> {
+			{log.severe("Demo Timeout, was run after 3s");}
+		}, 3000);
+
+		log.severe("Demo Timeout: Function to be run is registered into timer instance");
 	}
 
 	/**
@@ -121,22 +123,22 @@ public class KeepAliveProtocol extends Protocol implements IRequestReplyProtocol
 	 */
 	@Override
 	public void sendRequest(Message msg) throws EndpointUnavailable {
-		endpoint.send(msg);
 		replyReceived = false;
+		endpoint.send(msg);
 
-		// Send request again after 5 seconds, if we receive a reply previously
+
+		// If we didnt receive reply in 20s, stop protocol
 		Utils.getInstance().setTimeout(() -> {
 			try {
 				if (replyReceived) {
 					sendRequest(new KeepAliveRequest());
-				}
-				else {
-					stopProtocol();
+				} else {
+					manager.endpointTimedOut(endpoint, this);
 				}
 			} catch (EndpointUnavailable e) {
-				//ignore...
+				// ignore...
 			}
-		}, 5000);
+		}, 5000); //TODO change to 20000
 	}
 
 	/**
@@ -152,18 +154,20 @@ public class KeepAliveProtocol extends Protocol implements IRequestReplyProtocol
 
 	/**
 	 * A request from client came through for previous round, and reset the 20s timer
+	 * Comment out to simulate server not sending reply, causing client to call timeout
 	 * @param msg
 	 * @throws EndpointUnavailable 
 	 */
 	@Override
 	public void receiveRequest(Message msg) throws EndpointUnavailable {
-		if(msg instanceof KeepAliveRequest) {
-			// Reset server-side timeout timer and send KeepAliveReply to client
-			sendReply(new KeepAliveReply());
-			requestReceived = true;
-			Utils.getInstance().cleanUp();
-			checkClientTimeout();
-		}
+		/**
+		 * if(msg instanceof KeepAliveRequest) {
+		 *	// Reset server-side timeout timer and send KeepAliveReply to client
+		 *  sendReply(new KeepAliveReply());
+		 *	requestReceived = true;
+		 *	checkClientTimeout();
+		 * }
+		 */
 	}
 
 	/**
