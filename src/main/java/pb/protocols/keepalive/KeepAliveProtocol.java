@@ -57,10 +57,12 @@ public class KeepAliveProtocol extends Protocol implements IRequestReplyProtocol
 
 	/**
 	 * replyReceived = indication if client received reply from server for previous round
+	 * 	Initialised to false to assume client hasn't receive a reply
 	 * requestReceived = indication if server received request from client for previous round
+	 * 	Initialised to false to assume server hasn't receive a request
 	 */
-	private boolean replyReceived = true;
-	private boolean requestReceived = true;
+	private boolean replyReceived = false;
+	private boolean requestReceived = false;
 
 	/**
 	 * @return the name of the protocol
@@ -114,20 +116,12 @@ public class KeepAliveProtocol extends Protocol implements IRequestReplyProtocol
 	 */
 	public void startAsClient() throws EndpointUnavailable {
 		sendRequest(new KeepAliveRequest());
-
-		// DEMO timeout function
-		// TODO delete during submission
-		Utils.getInstance().setTimeout(() -> {
-			{log.severe("Demo Timeout: Was run after 3s");}
-		}, 3000);
-
-		log.severe("Demo Timeout: Function is registered into scheduler, will be run after 3s");
 	}
 
 	/**
 	 * Send a request to server, reset state and schedule the next message
-	 * Comment out setTimeout block to simulate a client not sending subsequent KeepAliveRequests, causing server
-	 * to call time out
+	 * Comment out sendRequest statement to simulate a client not sending subsequent KeepAliveRequests,
+	 * causing server to call time out
 	 *
 	 * @param msg
 	 */
@@ -136,18 +130,18 @@ public class KeepAliveProtocol extends Protocol implements IRequestReplyProtocol
 		replyReceived = false;
 		endpoint.send(msg);
 
-		Utils.getInstance().setTimeout(() -> {
-			try {
-		 		if (replyReceived) {
-		 			sendRequest(new KeepAliveRequest());
-		 		} else {
-		 			// If no reply received from server after 20s, stop protocol
-		 			manager.endpointTimedOut(endpoint, this);
-		 		}
-			} catch (EndpointUnavailable e) {
-				// ignore...
-			}
-		 }, 20000);
+ 		Utils.getInstance().setTimeout(() -> {
+ 			try {
+ 		 		if (replyReceived) {
+ 		 			sendRequest(new KeepAliveRequest());
+                } else {
+ 		 			// If no reply received from server after 20s, stop protocol
+ 		 			manager.endpointTimedOut(endpoint, this);
+                }
+ 			} catch (EndpointUnavailable e) {
+ 				// ignore...
+ 			}
+ 		 }, 20000);
 
 	}
 

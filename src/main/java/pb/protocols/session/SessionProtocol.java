@@ -50,8 +50,10 @@ public class SessionProtocol extends Protocol implements IRequestReplyProtocol {
 	private volatile boolean protocolRunning=false;
 
 	/**
-	 * requestReceived = Indicates whether server receives SessionStartRequest from client
-	 * replyReceived = Indicates whether client received SessionStartReply or SessionStopReply from server
+	 * requestReceived = Indicates whether server received SessionStartRequest from client
+	 *  Initialised to false to assume server hasn't receive a SessionStartRequest, after receiving KeepAliveRequest
+	 * replyReceived = Indicates whether client received SessionStartReply/SessionStopReply from server
+	 *  Initialised to false to assume client hasn't receive a reply, after sending Session(Start/Stop)Request to server
 	 */
 	private boolean requestReceived = false;
 	private boolean replyReceived = false;
@@ -192,7 +194,7 @@ public class SessionProtocol extends Protocol implements IRequestReplyProtocol {
 	 * (Weird, if serverManager stopped its endpoint, clientManager wouldn't know and
 	 * should wait for timeout instead, so shouldn't need to comment out manager.sessionStarted/Stopped,
 	 * unless there something wrong with current implementation logic.
-	 * Current implementation works on SessionStartRequest, ie do not need to comment out manager.sessionStarted, but
+	 * Current implementation works on SessionStartRequest, i.e. do not need to comment out manager.sessionStarted, but
 	 * not SessionStopRequest)
 	 * @param msg
 	 */
