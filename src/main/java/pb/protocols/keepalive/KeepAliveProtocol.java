@@ -59,10 +59,10 @@ public class KeepAliveProtocol extends Protocol implements IRequestReplyProtocol
 	 * replyReceived = indication if client received reply from server for previous round
 	 * 	Initialised to false to assume client hasn't receive a reply
 	 * requestReceived = indication if server received request from client for previous round
-	 * 	Initialised to false to assume server hasn't receive a request
+	 * 	Initialised to true to avoid 20s timing issues, so client have a 40s window to send
 	 */
 	private boolean replyReceived = false;
-	private boolean requestReceived = false;
+	private boolean requestReceived = true;
 
 	/**
 	 * @return the name of the protocol

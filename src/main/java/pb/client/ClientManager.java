@@ -6,6 +6,8 @@ import java.net.InetAddress;
 import java.net.Socket;
 import java.net.UnknownHostException;
 import java.util.logging.Logger;
+import java.util.concurrent.TimeUnit;
+
 
 import pb.Endpoint;
 import pb.EndpointUnavailable;
@@ -32,40 +34,25 @@ public class ClientManager extends Manager {
 	private SessionProtocol sessionProtocol;
 	private KeepAliveProtocol keepAliveProtocol;
 	private Socket socket;
-	
+	private int connection_attempt_count = 0;
+	private static int max_connection_attempts = 10;
+	private boolean connected = false;
+	private String host;
+	private int port;
+
 	public ClientManager(String host,int port) throws UnknownHostException, IOException {
+
+		this.host = host;
+		this.port = port;
 		
-		socket=new Socket(InetAddress.getByName(host),port);
-		Endpoint endpoint = new Endpoint(socket,this);
-		endpoint.start();
-		
-		// simulate the client shutting down after 2mins
-		// this will be removed when the client actually does something
-		// controlled by the user
-		Utils.getInstance().setTimeout(()->{
-			try {
-				sessionProtocol.stopSession();
-			} catch (EndpointUnavailable e) {
-				//ignore...
-			}
-		}, 120000);
-		
-		
-		try {
-			// just wait for this thread to terminate
-			endpoint.join();
-		} catch (InterruptedException e) {
-			// just make sure the ioThread is going to terminate
-			endpoint.close();
-		}
-		
-		Utils.getInstance().cleanUp();
+		connectToServer(host, port);
 	}
 	
 	/**
 	 * The endpoint is ready to use.
 	 * @param endpoint
 	 */
+
 	@Override
 	public void endpointReady(Endpoint endpoint) {
 		log.info("connection with server established");
@@ -112,6 +99,9 @@ public class ClientManager extends Manager {
 	public void endpointDisconnectedAbruptly(Endpoint endpoint) {
 		log.severe("connection with server terminated abruptly");
 		endpoint.close();
+		connected=false;
+		log.info("Attempting reconnection to server...");
+		connectToServer(this.host, this.port);
 	}
 
 	/**
@@ -191,4 +181,60 @@ public class ClientManager extends Manager {
 		}
 	}
 
+	private void wait_connect_again(String host, int port){
+		if(connection_attempt_count >= max_connection_attempts) {
+			log.info("Reconnection failed 10 times");
+			log.info("Client Manager is terminated");
+			return;
+		}
+		try {
+			log.info("Reconnection attempt "+connection_attempt_count+" failed, waiting for 5 seconds");
+			TimeUnit.SECONDS.sleep(5);
+		} catch (InterruptedException e) {
+			log.info("interrupted while sleeping");
+		}
+		log.info("Reconnecting.... Note: Extra delay of ~2s due to creating socket");
+		connectToServer(host, port);
+	}
+
+	private void connectToServer(String host, int port){
+		try {
+			connection_attempt_count++;
+			socket = new Socket(InetAddress.getByName(host), port);
+			log.info("socket open");
+			connected = true;
+		} catch(Exception e){
+			wait_connect_again(host,port);
+		}
+
+		// Socket created, so we can start an endpoint
+		if(connected) {
+			connection_attempt_count = 0;
+			Endpoint endpoint = new Endpoint(socket, this);
+			endpoint.start();
+			log.info("endpoint started");
+
+			// simulate the client shutting down after 2mins
+			// this will be removed when the client actually does something
+			// controlled by the user
+			Utils.getInstance().setTimeout(() -> {
+				try {
+					sessionProtocol.stopSession();
+				} catch (EndpointUnavailable e) {
+					//ignore...
+				}
+			}, 120000);
+
+			try {
+				// just wait for this thread to terminate
+				endpoint.join();
+			} catch (InterruptedException e) {
+				// just make sure the ioThread is going to terminate
+				endpoint.close();
+			}
+
+			Utils.getInstance().cleanUp();
+		}
+	}
 }
+
