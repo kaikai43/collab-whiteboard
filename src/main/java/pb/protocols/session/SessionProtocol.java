@@ -2,14 +2,12 @@ package pb.protocols.session;
 
 import java.util.logging.Logger;
 
-import pb.Endpoint;
-import pb.EndpointUnavailable;
-import pb.Manager;
-import pb.Utils;
+import pb.managers.Manager;
+import pb.managers.endpoint.Endpoint;
 import pb.protocols.Message;
 import pb.protocols.Protocol;
+import pb.utils.Utils;
 import pb.protocols.IRequestReplyProtocol;
-import pb.protocols.keepalive.KeepAliveRequest;
 
 /**
  * Allows the client to request the session to start and to request the session
@@ -21,9 +19,9 @@ import pb.protocols.keepalive.KeepAliveRequest;
  * e.g. perhaps the server is becoming overloaded and needs to shed some
  * clients.
  * 
- * @see {@link pb.Manager}
- * @see {@link pb.Endpoint}
- * @see {@link pb.protocols.Protocol}
+ * @see {@link pb.managers.Manager}
+ * @see {@link pb.managers.endpoint.Endpoint}
+ * @see {@link pb.Protocol}
  * @see {@link pb.protocols.IRequestReplyProtocol}
  * @see {@link pb.protocols.session.SessionStartRequest}
  * @see {@link pb.protocols.session.SessionStartReply}
@@ -40,6 +38,11 @@ public class SessionProtocol extends Protocol implements IRequestReplyProtocol {
 	 */
 	public static final String protocolName="SessionProtocol";
 	
+	/**
+	 * Default request timeout
+	 */
+	private int sessionTimeout = 40000;
+	
 	// Use of volatile is in case the thread that calls stopProtocol is different
 	// to the endpoint thread, although in this case it hardly needed.
 	
@@ -48,23 +51,19 @@ public class SessionProtocol extends Protocol implements IRequestReplyProtocol {
 	 * or not.
 	 */
 	private volatile boolean protocolRunning=false;
-
+	
 	/**
-	 * requestReceived = Indicates whether server received SessionStartRequest from client
-	 *  Initialised to false to assume server hasn't receive a SessionStartRequest, after receiving KeepAliveRequest
-	 * replyReceived = Indicates whether client received SessionStartReply/SessionStopReply from server
-	 *  Initialised to false to assume client hasn't receive a reply, after sending Session(Start/Stop)Request to server
+	 * Whether the protocol has been stopped.
 	 */
-	private boolean requestReceived = false;
-	private boolean replyReceived = false;
+	private volatile boolean stopped=false;
 	
 	/**
 	 * Initialise the protocol with an endpoint and manager.
 	 * @param endpoint
 	 * @param manager
 	 */
-	public SessionProtocol(Endpoint endpoint, Manager manager) {
-		super(endpoint,manager);
+	public SessionProtocol(Endpoint endpoint, ISessionProtocolHandler manager) {
+		super(endpoint,(Manager)manager);
 	}
 	
 	/**
@@ -84,6 +83,7 @@ public class SessionProtocol extends Protocol implements IRequestReplyProtocol {
 		if(protocolRunning) {
 			log.severe("protocol stopped while it is still underway");
 		}
+		stopped=true;
 	}
 	
 	/*
@@ -92,61 +92,46 @@ public class SessionProtocol extends Protocol implements IRequestReplyProtocol {
 
 	
 	/**
-	 * Called by the manager that is acting as a client.
-	 * Comment out to simulate client not sending SessionStartRequest, causing server to call timeout
+	 * Called by the manager that is acting as a client. Timeout if
+	 * a response is not seen.
 	 */
 	@Override
-	public void startAsClient() throws EndpointUnavailable {
+	public void startAsClient() {
+		//  send the server a start session request
 		sendRequest(new SessionStartRequest());
-
 	}
 
 	/**
 	 * Called by the manager that is acting as a server.
-	 * Modified according to task 3, server call timeout if SessionStartRequest not received after 20s
 	 */
 	@Override
 	public void startAsServer() {
-		Utils.getInstance().setTimeout(() -> {
-			{
-				// Server calls timeout if SessionStartRequest not received after 30s
-				if (!requestReceived) {
-					manager.endpointTimedOut(endpoint, this);
-				}
+		Utils.getInstance().setTimeout(()->{
+			if(!stopped && !protocolRunning) {
+				// we timed out
+				manager.endpointTimedOut(endpoint, this);
 			}
-		}, 20000);
+		}, sessionTimeout);
 	}
 	
 	/**
 	 * Generic stop session call, for either client or server.
-	 * @throws EndpointUnavailable if the endpoint is not ready or has terminated
 	 */
-	public void stopSession() throws EndpointUnavailable {
+	public void stopSession() {
 		sendRequest(new SessionStopRequest());
 	}
 	
 	/**
-	 * Modified according to task 3
-	 * Send a request, if reply not received within 20s, client calls timeout
-	 * Don't need to do anything if sending out SessionStartRequest, since initially replyReceived is false
+	 * Just send a request, nothing special.
 	 * @param msg
 	 */
 	@Override
-	public void sendRequest(Message msg) throws EndpointUnavailable {
-		// If sending out a SessionStopRequest, reset replyReceived state
-		if (msg instanceof SessionStopRequest){
-			replyReceived = false;
-		}
-		endpoint.send(msg);
-
-		// Client calls timeout if no reply received from server after 20s of sending any request
-		Utils.getInstance().setTimeout(() -> {
-			{
-				if (!replyReceived) {
-					manager.endpointTimedOut(endpoint, this);
-				}
-			}
-		}, 20000);
+	public void sendRequest(Message msg) {
+		endpoint.sendWithTimeout(msg,()->{
+			// the message timed out
+			if(!stopped)
+			manager.endpointTimedOut(endpoint, this);
+		},sessionTimeout);
 	}
 
 	/**
@@ -154,7 +139,6 @@ public class SessionProtocol extends Protocol implements IRequestReplyProtocol {
 	 * the session has started, otherwise if its a session stop reply then
 	 * tell the manager that the session has stopped. If something weird 
 	 * happens then tell the manager that something weird has happened.
-	 * Modified according to task 3, indicates whether client receives any reply from server
 	 * @param msg
 	 */
 	@Override
@@ -166,8 +150,7 @@ public class SessionProtocol extends Protocol implements IRequestReplyProtocol {
 				return;
 			}
 			protocolRunning=true;
-			replyReceived=true;
-			manager.sessionStarted(endpoint);
+			((ISessionProtocolHandler)manager).sessionStarted(endpoint);
 		} else if(msg instanceof SessionStopReply) {
 			if(!protocolRunning) {
 				// error, received a second reply?
@@ -175,8 +158,7 @@ public class SessionProtocol extends Protocol implements IRequestReplyProtocol {
 				return;
 			}
 			protocolRunning=false;
-			replyReceived=true;
-			manager.sessionStopped(endpoint);
+			((ISessionProtocolHandler)manager).sessionStopped(endpoint);
 		}
 	}
 
@@ -185,21 +167,10 @@ public class SessionProtocol extends Protocol implements IRequestReplyProtocol {
 	 * tell the manager that the session has started. If the received request
 	 * is a session stop request then reply and tell the manager that
 	 * the session has stopped. If something weird has happened then...
-	 *
-	 * Modified according to task 3, indicates whether server receives session start request
-	 *
-	 * Comment out sendReply and its subsequent manager.sessionStarted/Stopped statements
-	 * to simulate server not sending out a particular reply, causing client timeout
-	 *
-	 * (Weird, if serverManager stopped its endpoint, clientManager wouldn't know and
-	 * should wait for timeout instead, so shouldn't need to comment out manager.sessionStarted/Stopped,
-	 * unless there something wrong with current implementation logic.
-	 * Current implementation works on SessionStartRequest, i.e. do not need to comment out manager.sessionStarted, but
-	 * not SessionStopRequest)
 	 * @param msg
 	 */
 	@Override
-	public void receiveRequest(Message msg) throws EndpointUnavailable {
+	public void receiveRequest(Message msg) {
 		if(msg instanceof SessionStartRequest) {
 			if(protocolRunning) {
 				// error, received a second request?
@@ -207,9 +178,8 @@ public class SessionProtocol extends Protocol implements IRequestReplyProtocol {
 				return;
 			}
 			protocolRunning=true;
-			requestReceived=true;
-			sendReply(new SessionStartReply());
-			manager.sessionStarted(endpoint);
+			endpoint.sendAndCancelTimeout(new SessionStartReply(),msg);
+			((ISessionProtocolHandler)manager).sessionStarted(endpoint);
 		} else if(msg instanceof SessionStopRequest) {
 			if(!protocolRunning) {
 				// error, received a second request?
@@ -217,8 +187,8 @@ public class SessionProtocol extends Protocol implements IRequestReplyProtocol {
 				return;
 			}
 			protocolRunning=false;
-			sendReply(new SessionStopReply());
-			manager.sessionStopped(endpoint);
+			endpoint.sendAndCancelTimeout(new SessionStopReply(),msg);
+			((ISessionProtocolHandler)manager).sessionStopped(endpoint);
 		}
 		
 	}
@@ -228,7 +198,7 @@ public class SessionProtocol extends Protocol implements IRequestReplyProtocol {
 	 * @param msg
 	 */
 	@Override
-	public void sendReply(Message msg) throws EndpointUnavailable {
+	public void sendReply(Message msg) {
 		endpoint.send(msg);
 	}
 
