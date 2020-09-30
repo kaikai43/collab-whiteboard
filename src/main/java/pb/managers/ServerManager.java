@@ -115,6 +115,12 @@ public class ServerManager extends Manager implements ISessionProtocolHandler,
 	 * The port for this server.
 	 */
 	private final int port;
+
+	/**
+	 * password for this server
+	 */
+
+	private final String password;
 	
 	/**
 	 * Should we force shutdown, i.e force endpoints to close.
@@ -132,8 +138,16 @@ public class ServerManager extends Manager implements ISessionProtocolHandler,
 	 */
 	public ServerManager(int port) {
 		this.port=port;
+		this.password=null;
 		liveEndpoints=new HashSet<>();
 		setName("ServerManager"); // name the thread, urgh simple log can't print it :-(
+	}
+
+	public ServerManager(int port,String password) {
+		this.port=port;
+		this.password=password;
+		liveEndpoints=new HashSet<>();
+		setName("ServerManager");
 	}
 	
 	/**
@@ -181,6 +195,7 @@ public class ServerManager extends Manager implements ISessionProtocolHandler,
 	@Override
 	public void run() {
 		log.info("started");
+		log.info("password is " +password);
 		// when the IO thread terminates, and all endpoints have terminated,
 		// then the server will terminate
 		try {
@@ -290,7 +305,31 @@ public class ServerManager extends Manager implements ISessionProtocolHandler,
 		 * command line when the server is running. If the secrets match then the
 		 * shutdown is issued, otherwise it is ignored.
 		 */
-		
+		endpoint.on(shutdownServer,(eventargs2)->{
+			//code for normal shutdwon
+			String givenPassword = (String) eventargs2[0];
+			if(givenPassword.equals(password)||password==null){
+				//password correct
+				shutdown();
+			}
+			}).on(forceShutdownServer,(eventargs2)->{
+			//code for force shutdown
+			String givenPassword = (String) eventargs2[0];
+			if(givenPassword.equals(password)||password==null){
+				//password correct
+				forceShutdown();
+			}
+			}).on(vaderShutdownServer,(eventargs2)->{
+			//code for vader shutdown
+			String givenPassword = (String) eventargs2[0];
+			if(givenPassword.equals(password)||password==null){
+				//password correct
+				vaderShutdown();
+			}
+			});
+
+
+
 		KeepAliveProtocol keepAliveProtocol = new KeepAliveProtocol(endpoint,this);
 		try {
 			// we need to add it to the endpoint before starting it

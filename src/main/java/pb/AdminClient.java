@@ -11,6 +11,8 @@ import org.apache.commons.cli.Options;
 import org.apache.commons.cli.ParseException;
 
 import pb.managers.ClientManager;
+import pb.managers.ServerManager;
+import pb.managers.endpoint.Endpoint;
 import pb.utils.Utils;
 
 /**
@@ -33,6 +35,10 @@ public class AdminClient  {
 	private static Logger log = Logger.getLogger(AdminClient.class.getName());
 	private static int port=Utils.serverPort; // default port number for the server
 	private static String host=Utils.serverHost; // default host for the server
+	private static String password=null;
+	private static boolean shutdown = false;
+	private static boolean forceShutdown = false;
+	private static boolean vaderShutdown = false;
 	
 	private static void help(Options options){
 		String header = "PB Admin Client for Unimelb COMP90015\n\n";
@@ -52,6 +58,10 @@ public class AdminClient  {
         Options options = new Options();
         options.addOption("port",true,"server port, an integer");
         options.addOption("host",true,"hostname, a string");
+        options.addOption("password",true,"password for server");
+        options.addOption("shutdown",false,"regular shutdown of server");
+        options.addOption("force",false,"force shutdown of server");
+        options.addOption("vader",false,"vader shutdown of server");
         
         /*
 		 * TODO for project 2B. Include a command line option to read a secret
@@ -83,6 +93,37 @@ public class AdminClient  {
         if(cmd.hasOption("host")) {
         	host = cmd.getOptionValue("host");
         }
+
+        if(cmd.hasOption("password")){
+        	password = cmd.getOptionValue("password");
+        	log.info("password is "+password);
+		}
+
+		/**
+		 * if shutdown is called on its own, set its bool as true
+		 */
+		if(cmd.hasOption("shutdown") && !cmd.hasOption("vader") && !cmd.hasOption("force")){
+        	shutdown = true;
+        	log.info("shutdown requested with password: "+password);
+		}
+
+		/**
+		 * check is force shutdown is called but not vader, if it is, set force bool as true
+		 */
+
+		if(cmd.hasOption("shutdown") && !cmd.hasOption("vader") && cmd.hasOption("force")){
+			forceShutdown = true;
+			log.info("force shutdown requested with password: "+password);
+		}
+
+		/**
+		 * check if vader shutdown is called, if it is, set the vader bool as true
+		 * ignore force shutdown as vader is more brutal
+		 */
+		if(cmd.hasOption("shutdown") && cmd.hasOption("vader")) {
+			vaderShutdown = true;
+			log.info("vader shutdown requested with password: "+password);
+		}
         
         // start up the client
         log.info("PB Client starting up");
@@ -91,16 +132,54 @@ public class AdminClient  {
         // and the connection will use a thread that prevents the JVM
         // from terminating immediately
         ClientManager clientManager = new ClientManager(host,port);
-        clientManager.start();
-        
-        /*
+
+		/*
 		 * TODO for project 2B. Emit an appropriate shutdown event to the server,
 		 * sending the password. Then shutdown the clientManager. The following line
 		 * will wait for the client manager session to stop cleanly (or otherwise).
 		 * Don't forget that you need to modify ServerMain.java to listen for these
 		 * events coming from any client that connects to it.
 		 */
-        
+
+        //event callbacks here
+		//when the client makes a connection, shutdown.
+		clientManager.on(ClientManager.sessionStarted,(eventArgs)->{
+			Endpoint endpoint = (Endpoint)eventArgs[0];
+			//log.info("Client session started: "+endpoint.getOtherEndpointId());
+			if(shutdown){
+				log.info("shutdown requested");
+				//normal shutdown
+				if (password != null){
+					endpoint.emit(ServerManager.shutdownServer,password);
+				} else {
+					endpoint.emit(ServerManager.shutdownServer, "SHUTDOWN_SERVER");
+				}
+				clientManager.shutdown();
+			}
+			if(forceShutdown){
+				log.info("force shutdown requested");
+				//force shutdown
+				if (password != null){
+					endpoint.emit(ServerManager.forceShutdownServer,password);
+				} else {
+					endpoint.emit(ServerManager.forceShutdownServer, "SHUTDOWN_SERVER");
+				}
+				clientManager.shutdown();
+			}
+			if(vaderShutdown){
+				log.info("vader shutdown requested");
+				//vader shutdown
+				if (password != null){
+					endpoint.emit(ServerManager.vaderShutdownServer,password);
+				} else {
+					endpoint.emit(ServerManager.vaderShutdownServer, "SHUTDOWN_SERVER");
+				}
+				clientManager.shutdown();
+			}
+		});
+
+        clientManager.start();
+
         clientManager.join();
         Utils.getInstance().cleanUp();
         

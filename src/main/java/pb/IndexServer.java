@@ -103,6 +103,12 @@ public class IndexServer {
 	 * been seen. We will use this to give the most recent peer that has the file.
 	 */
 	public static final Map<String,Long> lastTimeSeen=new HashMap<>();
+
+	/**
+	 * password option
+	 */
+
+	public static String password = null;
 	
 	/**
 	 * The default port number for the server.
@@ -223,9 +229,14 @@ public class IndexServer {
 		}
 
         if(cmd.hasOption("password")){
-        		String password = cmd.getOptionValue("password");
+        		password = cmd.getOptionValue("password");
         		System.out.println(password);
 		}
+        /*
+        else{
+        	String password = null;
+		}
+         */
         
         if(cmd.hasOption("port")){
         	try{
@@ -245,8 +256,15 @@ public class IndexServer {
         
         
         // create a server manager and setup event handlers
-        ServerManager serverManager = new ServerManager(port);
-        
+		// declare server manager outside if
+		ServerManager serverManager;
+		if(password!=null){
+			serverManager = new ServerManager(port,password);
+		}
+		else{
+			serverManager = new ServerManager(port);
+		}
+
         // event handlers
         // we must define the event handler callbacks BEFORE starting
         // the server, so that we don't miss any events.
@@ -271,7 +289,9 @@ public class IndexServer {
         		String peerport = (String) eventArgs2[0];
         		log.info("Received peer update: "+peerport);
         		peerUpdate(peerport);
-        	});
+        	})/**.on(shutDownRequest, (eventArgs2)->{
+        		//log.info("Received shutdown request");
+			})**/;
         }).on(ServerManager.sessionStopped,(eventArgs)->{
         	Endpoint endpoint = (Endpoint)eventArgs[0];
         	log.info("Client session ended: "+endpoint.getOtherEndpointId());
@@ -287,7 +307,12 @@ public class IndexServer {
         // start up the server
         log.info("PB Index Server starting up");
         serverManager.start();
-        
-    }
+
+		//Utils.getInstance().cleanUp();
+        try{
+        	serverManager.join();
+		}catch(InterruptedException e){}
+		Utils.getInstance().cleanUp();
+	}
 
 }
