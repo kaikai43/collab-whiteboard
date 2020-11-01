@@ -190,7 +190,11 @@ public class WhiteboardApp {
 		whiteboards=new HashMap<>();
 
 		show(peerport);
-		
+
+		// Jin: Should heavily reference with the logic for FileSharingPeer
+		// Jin: Initiate connection to server, look at FileSharingPeer.uploadFileList
+		// Jin: Dont start peerManager or clientManager here? Put it in the methods instead
+		// Jin: Should include a method that connects to whiteboardServer
 	}
 	
 	/******
