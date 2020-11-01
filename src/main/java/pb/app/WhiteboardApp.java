@@ -1,5 +1,7 @@
 package pb.app;
 
+import pb.managers.ClientManager;
+
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
@@ -188,7 +190,7 @@ public class WhiteboardApp {
 	public WhiteboardApp(int peerPort,String whiteboardServerHost, 
 			int whiteboardServerPort) {
 		whiteboards=new HashMap<>();
-
+		this.peerport = whiteboardServerHost + ":" +Integer.toString(peerPort);
 		show(peerport);
 
 		// Jin: Should heavily reference with the logic for FileSharingPeer
@@ -283,7 +285,10 @@ public class WhiteboardApp {
 	
 	
 	// From whiteboard peer
-	
+	public static void emitSharedBord(String peerport, Whiteboard whiteboard, Endpoint endpoint,
+									  ClientManager clientManager){
+
+	}
 	
 	
 	/******
