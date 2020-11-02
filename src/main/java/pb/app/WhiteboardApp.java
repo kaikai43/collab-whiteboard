@@ -1,6 +1,13 @@
 package pb.app;
 
+import pb.IndexServer;
+import pb.WhiteboardServer;
 import pb.managers.ClientManager;
+import pb.managers.IOThread;
+import pb.managers.PeerManager;
+import pb.managers.ServerManager;
+import pb.managers.endpoint.Endpoint;
+import pb.utils.Utils;
 
 import java.awt.BorderLayout;
 import java.awt.Color;
@@ -12,6 +19,7 @@ import java.awt.event.ItemEvent;
 import java.awt.event.ItemListener;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
+import java.net.UnknownHostException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -171,6 +179,18 @@ public class WhiteboardApp {
 	 * etc. where it may appear in comments.
 	 */
 	String peerport="standalone"; // a default value for the non-distributed version
+
+	/**
+	 * port to use when contacting the index server
+	 */
+	private static int whiteboardServerPort; // default port number for index server
+
+	/**
+	 * host to use when contacting the index server
+	 */
+	private static String whiteboardServerHost; // default host for the index server
+
+	PeerManager peerManager;
 	
 	/*
 	 * GUI objects, you probably don't need to modify these things... you don't
@@ -190,13 +210,13 @@ public class WhiteboardApp {
 	public WhiteboardApp(int peerPort,String whiteboardServerHost, 
 			int whiteboardServerPort) {
 		whiteboards=new HashMap<>();
-		this.peerport = whiteboardServerHost + ":" +Integer.toString(peerPort);
+		this.whiteboardServerPort = whiteboardServerPort;
+		this.whiteboardServerHost = whiteboardServerHost;
+		this.peerManager = new PeerManager(peerPort);
+		startPeerManager();
 		show(peerport);
 
 		// Jin: Should heavily reference with the logic for FileSharingPeer
-		// Jin: Initiate connection to server, look at FileSharingPeer.uploadFileList
-		// Jin: Dont start peerManager or clientManager here? Put it in the methods instead
-		// Jin: Should include a method that connects to whiteboardServer
 	}
 	
 	/******
@@ -285,11 +305,59 @@ public class WhiteboardApp {
 	
 	
 	// From whiteboard peer
-	public static void emitSharedBord(String peerport, Whiteboard whiteboard, Endpoint endpoint,
-									  ClientManager clientManager){
+
+	/**
+	 * (Un)Share board by starting up a serverManager then sending updates to indexServer
+	 * to say which boards being (un)shared
+	 */
+	private void startPeerManager() {
+		peerManager.on(PeerManager.peerServerManager, (args)->{
+			ServerManager serverManager = (ServerManager)args[0];
+			serverManager.on(IOThread.ioThread, (args2)->{
+				String peerport = (String) args2[0];
+				this.peerport = peerport;
+				log.info("Peer "+ peerport +" successfully established as server");
+			});
+		});
+		peerManager.start();
 
 	}
-	
+
+	/**
+	 * Open client connection to index server and send board info to update the index
+	 */
+	public void uploadBoardInfo(String boardName, String peerport, boolean share) throws InterruptedException, UnknownHostException {
+		ClientManager clientManager =  peerManager.connect(whiteboardServerPort, whiteboardServerHost);
+		clientManager.on(PeerManager.peerStarted, (args)->{
+			Endpoint endpoint = (Endpoint)args[0];
+			System.out.println("Connected to whiteboard server: "+endpoint.getOtherEndpointId());
+			endpoint.on(WhiteboardServer.error, (args2)->{
+				String rejectedBoardName = (String) args2[0];
+				System.out.println("Whiteboard server did not accept the board: "
+						+rejectedBoardName);
+			});
+			System.out.println("Sending info for "+ boardName +" to whiteboard server.");
+			if (share){
+				endpoint.emit(WhiteboardServer.shareBoard, boardName);
+				log.info("Peer " + peerport + " successfully shared board "+boardName);
+			} else {
+				endpoint.emit(WhiteboardServer.unshareBoard, boardName);
+				log.info("Peer " + peerport + " successfully unshared board "+boardName);
+			}
+			// Finished performing board upload, shutdown endpoint
+			clientManager.shutdown();
+		}).on(PeerManager.peerStopped, (args)->{
+			Endpoint endpoint = (Endpoint)args[0];
+			System.out.println("Disconnected from the index server: "+endpoint.getOtherEndpointId());
+		}).on(PeerManager.peerError, (args)->{
+			Endpoint endpoint = (Endpoint)args[0];
+			System.out.println("There was an error communicating with the index server: "
+					+endpoint.getOtherEndpointId());
+		});
+		clientManager.start();
+		clientManager.join();
+
+	}
 	
 	/******
 	 * 
@@ -302,7 +370,8 @@ public class WhiteboardApp {
 	 * Wait for the peer manager to finish all threads.
 	 */
 	public void waitToFinish() {
-		
+		peerManager.joinWithClientManagers();
+
 	}
 	
 	/**
@@ -411,7 +480,14 @@ public class WhiteboardApp {
 	public void setShare(boolean share) {
 		if(selectedBoard!=null) {
         	selectedBoard.setShared(share);
-        } else {
+			try {
+				uploadBoardInfo(selectedBoard.getName(), peerport, share);
+			} catch (InterruptedException e) {
+				System.out.println("Interrupted while uploading board info.");
+			} catch (UnknownHostException e) {
+				System.out.println("Whiteboard server host not found.");
+			}
+		} else {
         	log.severe("there is no selected board");
         }
 	}

@@ -15,6 +15,7 @@ import org.apache.commons.cli.ParseException;
 
 
 import pb.app.WhiteboardApp;
+import pb.managers.IOThread;
 import pb.managers.ServerManager;
 import pb.managers.endpoint.Endpoint;
 import pb.utils.Utils;
@@ -196,20 +197,15 @@ public class WhiteboardServer {
          * TODO: Put some server related code here.
          */
         // Should heavily reference IndexServer
-        // Jin: Listen to shareBoard event from any client, emit sharingBoard event to all other clients/all clients
 		serverManager.on(ServerManager.sessionStarted,(eventArgs)-> {
 			Endpoint endpoint = (Endpoint)eventArgs[0];
 			log.info("Client session started: "+endpoint.getOtherEndpointId());
-			log.info("Transmitting all currently shared boards to client.");
-			for (String board : sharedBoards){
-				serverManager.emit(sharingBoard, board);
-			}
 			endpoint.on(shareBoard, (eventArgs2)->{
 				String boardInfo = (String) eventArgs2[0];
 				String[] parts=boardInfo.split(":");
 				log.info("Board " + parts[2] + " is shared by: "+ parts[0] + ":" + parts[1]);
 				sharedBoardsInsert(boardInfo);
-				serverManager.emit(sharingBoard, boardInfo);
+				endpoint.emit(sharingBoard, boardInfo);
 			}).on(unshareBoard, (eventArgs2)->{
 				String boardInfo = (String) eventArgs2[0];
 				String[] parts=boardInfo.split(":");
@@ -218,10 +214,21 @@ public class WhiteboardServer {
 					sharedBoardsDelete(boardInfo);
 				} else {
 					//Peer trying to unshare a board that does not exist
-					serverManager.emit(error, "Board does not exist.");
+					endpoint.emit(error, "Board does not exist.");
 				}
-				serverManager.emit(unsharingBoard, boardInfo);
+				endpoint.emit(unsharingBoard, boardInfo);
 			});
+			// Sharing currently share boards to newly connected clients
+			if (!sharedBoards.isEmpty()){
+				log.info("Transmitting all currently shared boards to client.");
+				for (String board : sharedBoards){
+					endpoint.emit(sharingBoard, board);
+				}
+			}
+		}).on(IOThread.ioThread, (eventArgs)->{
+			String peerport = (String) eventArgs[0];
+			// we don't need this info, but let's log it
+			log.info("using Internet address: "+peerport);
 		});
 
 		// Jin: Listen to peerStarted event from new clients, emit multiple sharingBoard events to that client
@@ -232,9 +239,6 @@ public class WhiteboardServer {
         // start up the server
         log.info("Whiteboard Server starting up");
         serverManager.start();
-        // nothing more for the main thread to do
-        serverManager.join();
-        Utils.getInstance().cleanUp();
         
     }
 
