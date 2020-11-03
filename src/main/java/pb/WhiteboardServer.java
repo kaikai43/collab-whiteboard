@@ -120,9 +120,10 @@ public class WhiteboardServer {
 	 * @param data: host:port:boardID
 	 */
 	private static void sharedBoardsInsert(String data){
-		synchronized (sharedBoards){
+		sharedBoards.add(data);
+		/*synchronized (sharedBoards){
 			sharedBoards.add(data);
-		}
+		}*/
 /*		//HashMap version of same implementation
 		String host = getBoardHost(data);
 		String boardId = getBoardId(data);
@@ -142,9 +143,10 @@ public class WhiteboardServer {
 	 * @param data: host:port:boardID
 	 */
 	private static void sharedBoardsDelete(String data) {
-		synchronized (sharedBoards) {
+		sharedBoards.remove(data);
+		/*synchronized (sharedBoards) {
 			sharedBoards.remove(data);
-		}
+		}*/
 	}
 	
 	private static void help(Options options){
@@ -201,11 +203,12 @@ public class WhiteboardServer {
 			Endpoint endpoint = (Endpoint)eventArgs[0];
 			log.info("Client session started: "+endpoint.getOtherEndpointId());
 			endpoint.on(shareBoard, (eventArgs2)->{
-				String boardInfo = (String) eventArgs2[0];
-				String[] parts=boardInfo.split(":");
+				String boardName = (String) eventArgs2[0];
+				String[] parts=boardName.split(":");
 				log.info("Board " + parts[2] + " is shared by: "+ parts[0] + ":" + parts[1]);
-				sharedBoardsInsert(boardInfo);
-				endpoint.emit(sharingBoard, boardInfo);
+				sharedBoardsInsert(boardName);
+				// Pass on boardName to other clients
+				endpoint.emit(sharingBoard, boardName);
 			}).on(unshareBoard, (eventArgs2)->{
 				String boardInfo = (String) eventArgs2[0];
 				String[] parts=boardInfo.split(":");
