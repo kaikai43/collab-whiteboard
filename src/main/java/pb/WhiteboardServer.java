@@ -120,10 +120,10 @@ public class WhiteboardServer {
 	 * @param data: host:port:boardID
 	 */
 	private static void sharedBoardsInsert(String data){
-		sharedBoards.add(data);
-		/*synchronized (sharedBoards){
+		//sharedBoards.add(data);
+		synchronized (sharedBoards){
 			sharedBoards.add(data);
-		}*/
+		}
 /*		//HashMap version of same implementation
 		String host = getBoardHost(data);
 		String boardId = getBoardId(data);
@@ -143,10 +143,10 @@ public class WhiteboardServer {
 	 * @param data: host:port:boardID
 	 */
 	private static void sharedBoardsDelete(String data) {
-		sharedBoards.remove(data);
-		/*synchronized (sharedBoards) {
+		//sharedBoards.remove(data);
+		synchronized (sharedBoards) {
 			sharedBoards.remove(data);
-		}*/
+		}
 	}
 	
 	private static void help(Options options){
@@ -204,22 +204,22 @@ public class WhiteboardServer {
 			log.info("Client session started: "+endpoint.getOtherEndpointId());
 			endpoint.on(shareBoard, (eventArgs2)->{
 				String boardName = (String) eventArgs2[0];
-				String[] parts=boardName.split(":");
-				log.info("Board " + parts[2] + " is shared by: "+ parts[0] + ":" + parts[1]);
+				log.info("Received shared board: "+boardName);
 				sharedBoardsInsert(boardName);
 				// Pass on boardName to other clients
+				log.info("Transmitting board share to all peers.");
 				endpoint.emit(sharingBoard, boardName);
 			}).on(unshareBoard, (eventArgs2)->{
-				String boardInfo = (String) eventArgs2[0];
-				String[] parts=boardInfo.split(":");
-				log.info("Board " + parts[2] + " is unshared by: "+ parts[0] + ":" + parts[1]);
-				if (sharedBoards.contains(boardInfo)){
-					sharedBoardsDelete(boardInfo);
+				String boardName = (String) eventArgs2[0];
+				log.info("Received unshared board: "+boardName);
+				if (sharedBoards.contains(boardName)){
+					sharedBoardsDelete(boardName);
 				} else {
 					//Peer trying to unshare a board that does not exist
 					endpoint.emit(error, "Board does not exist.");
 				}
-				endpoint.emit(unsharingBoard, boardInfo);
+				log.info("Transmitting board unshare to all peers.");
+				endpoint.emit(unsharingBoard, boardName);
 			});
 			// Sharing currently share boards to newly connected clients
 			if (!sharedBoards.isEmpty()){

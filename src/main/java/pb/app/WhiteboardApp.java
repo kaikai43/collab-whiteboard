@@ -191,6 +191,7 @@ public class WhiteboardApp {
 	private static String whiteboardServerHost; // default host for the index server
 
 	PeerManager peerManager;
+	ClientManager indexClientManager; // Client manager that connects to index server
 	
 	/*
 	 * GUI objects, you probably don't need to modify these things... you don't
@@ -320,9 +321,10 @@ public class WhiteboardApp {
 			serverManager.on(IOThread.ioThread, (args2)->{
 				String peerport = (String) args2[0];
 				this.peerport = peerport;
-				log.info(peerport +" successfully established as a peer server");
+				log.info(peerport +" successfully established peer server");
 				try {
-					listenForBoards();
+					indexClientManager = peerManager.connect(whiteboardServerPort, whiteboardServerHost);
+					shareBoards(indexClientManager);
 				} catch (InterruptedException e) {
 					System.out.println("Interrupted while trying to listen from index server.");
 				} catch (UnknownHostException e) {
@@ -336,38 +338,36 @@ public class WhiteboardApp {
 	/**
 	 * Subscribe to boards shared from the index server
 	 */
-	private void listenForBoards() throws InterruptedException, UnknownHostException {
-		ClientManager clientManager = peerManager.connect(whiteboardServerPort, whiteboardServerHost);
-		clientManager.on(PeerManager.peerStarted, (args)->{
-			Endpoint endpoint = (Endpoint)args[0];
-			System.out.println("Connected to whiteboard server: "+endpoint.getOtherEndpointId());
+	private void shareBoards(ClientManager clientManager) {
+		clientManager.on(PeerManager.peerStarted, (args)-> {
+			Endpoint endpoint = (Endpoint) args[0];
+			System.out.println("Connected to whiteboard server: " + endpoint.getOtherEndpointId());
 			System.out.println("Listening to boards shared....");
-			endpoint.on(WhiteboardServer.error, (args2)->{
+			endpoint.on(WhiteboardServer.error, (args2) -> {
 				String errorMessage = (String) args2[0];
-				System.out.println("Whiteboard server failed to unshare board: "
-						+errorMessage);
-				clientManager.shutdown();
-			}).on(WhiteboardServer.sharingBoard, (args2)-> {
-				String sharedBoardName = (String) args2[0];
-				// create a remote board if not in whiteboards list
-				if (!whiteboards.containsKey(sharedBoardName)){
-					System.out.println("Received board share from index: "+sharedBoardName);
-					Whiteboard whiteboard = new Whiteboard(sharedBoardName,true);
-					addBoard(whiteboard,false);
-				} else {
-					// Peer is owner of board, or already has board, do nothing
-				}
-			}).on(WhiteboardServer.unsharingBoard, (args2)-> {
-				String unsharedBoardName = (String) args2[0];
-				System.out.println("Received board unshare from peer: "+unsharedBoardName);
-				// remove a remote board if not in whiteboards list
-				if (!whiteboards.containsKey(unsharedBoardName)){
-					deleteBoard(unsharedBoardName);
-				} else {
-					//Board does not exist, log info and do nothing
-					log.info("The unshared board is not present in peer. Continuing...");
-				}
+				System.out.println("Whiteboard server failed to share boards: "
+						+ errorMessage);
 			});
+		}).on(WhiteboardServer.sharingBoard, (args2)-> {
+			String sharedBoardName = (String) args2[0];
+			// create a remote board if not in whiteboards list
+			System.out.println("Received shared board: "+ sharedBoardName);
+			if (!whiteboards.containsKey(sharedBoardName)){
+				Whiteboard whiteboard = new Whiteboard(sharedBoardName,true);
+				addBoard(whiteboard,false);
+			} else {
+				// Peer is owner of board, or already has board, do nothing
+			}
+		}).on(WhiteboardServer.unsharingBoard, (args2)-> {
+			String unsharedBoardName = (String) args2[0];
+			System.out.println("Received unshared board: "+unsharedBoardName);
+			// remove a remote board if not in whiteboards list
+			if (!whiteboards.containsKey(unsharedBoardName)){
+				deleteBoard(unsharedBoardName);
+			} else {
+				//Board does not exist, log info and do nothing
+				log.info("The unshared board is not present in peer. Continuing...");
+			}
 		}).on(PeerManager.peerStopped, (args)->{
 			Endpoint endpoint = (Endpoint)args[0];
 			System.out.println("Disconnected from the index server: "+endpoint.getOtherEndpointId());
@@ -377,6 +377,7 @@ public class WhiteboardApp {
 					+endpoint.getOtherEndpointId());
 		});
 		clientManager.start();
+		// Thread doesnt end until peerManager.shutdown() called, no need to .join()?
 	}
 
 	/**
@@ -451,6 +452,7 @@ public class WhiteboardApp {
 	 */
 	public void waitToFinish() {
 		peerManager.joinWithClientManagers();
+		peerManager.shutdown();
 	}
 	
 	/**
