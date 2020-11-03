@@ -214,13 +214,6 @@ public class WhiteboardApp {
 		this.whiteboardServerHost = whiteboardServerHost;
 		this.peerManager = new PeerManager(peerPort);
 		startPeerManager();
-		try {
-			listenForBoards();
-		} catch (InterruptedException e) {
-			System.out.println("Interrupted while trying to listen from index server.");
-		} catch (UnknownHostException e) {
-			System.out.println("Unable to locate index server while trying to listen from it.");
-		}
 		show(peerport);
 
 		// Jin: Should heavily reference with the logic for FileSharingPeer
@@ -314,8 +307,7 @@ public class WhiteboardApp {
 	// From whiteboard peer
 
 	/**
-	 * (Un)Share board by starting up a serverManager then sending updates to indexServer
-	 * to say which boards being (un)shared
+	 * Start up peer manager
 	 */
 	private void startPeerManager() {
 		peerManager.on(PeerManager.peerServerManager, (args)->{
@@ -323,7 +315,14 @@ public class WhiteboardApp {
 			serverManager.on(IOThread.ioThread, (args2)->{
 				String peerport = (String) args2[0];
 				this.peerport = peerport;
-				log.info("Peer "+ peerport +" successfully established as server");
+				log.info(peerport +" successfully established as a peer server");
+				try {
+					listenForBoards();
+				} catch (InterruptedException e) {
+					System.out.println("Interrupted while trying to listen from index server.");
+				} catch (UnknownHostException e) {
+					System.out.println("Unable to locate index server while trying to listen from it.");
+				}
 			});
 		});
 		peerManager.start();
@@ -337,6 +336,7 @@ public class WhiteboardApp {
 		clientManager.on(PeerManager.peerStarted, (args)->{
 			Endpoint endpoint = (Endpoint)args[0];
 			System.out.println("Connected to whiteboard server: "+endpoint.getOtherEndpointId());
+			System.out.println("Listening to boards shared....");
 			endpoint.on(WhiteboardServer.error, (args2)->{
 				String errorMessage = (String) args2[0];
 				System.out.println("Whiteboard server failed to (un)share board: "
@@ -344,18 +344,32 @@ public class WhiteboardApp {
 				clientManager.shutdown();
 			}).on(WhiteboardServer.sharingBoard, (args2)-> {
 				String sharedBoardName = (String) args2[0];
-				System.out.println();
 				// create a remote board if not in whiteboards list
+				if (!whiteboards.containsKey(sharedBoardName)){
+					System.out.println("Received board share from peer: "+sharedBoardName);
+					Whiteboard whiteboard = new Whiteboard(sharedBoardName,true);
+					addBoard(whiteboard,false);
+				} else {
+					// Peer is owner of board, do nothing
+				}
+			}).on(WhiteboardServer.unsharingBoard, (args2)-> {
+				String unsharedBoardName = (String) args2[0];
+				System.out.println("Received board unshare from peer: "+unsharedBoardName);
+				// remove a remote board if not in whiteboards list
+				if (!whiteboards.containsKey(unsharedBoardName)){
+					deleteBoard(unsharedBoardName);
+				} else {
+					//Board does not exist, log info and do nothing
+					log.info("The unshared board is not present in peer. Continuing...");
+				}
 			});
 		}).on(PeerManager.peerStopped, (args)->{
 			Endpoint endpoint = (Endpoint)args[0];
 			System.out.println("Disconnected from the index server: "+endpoint.getOtherEndpointId());
-			clientManager.shutdown();
 		}).on(PeerManager.peerError, (args)->{
 			Endpoint endpoint = (Endpoint)args[0];
 			System.out.println("There was an error communicating with the index server: "
 					+endpoint.getOtherEndpointId());
-			clientManager.shutdown();
 		});
 		clientManager.start();
 	}
@@ -368,33 +382,32 @@ public class WhiteboardApp {
 		clientManager.on(PeerManager.peerStarted, (args)->{
 			Endpoint endpoint = (Endpoint)args[0];
 			System.out.println("Connected to whiteboard server: "+endpoint.getOtherEndpointId());
-			endpoint.on(WhiteboardServer.error, (args2)->{
-				String rejectedBoardName = (String) args2[0];
-				System.out.println("Whiteboard server failed to (un)share board: "
-						+rejectedBoardName);
-				clientManager.shutdown();
-			});
-			System.out.println("Sending info for "+ boardName +" to whiteboard server.");
 			if (share){
-				clientManager.emit(WhiteboardServer.shareBoard, boardName);
+				System.out.println("Transmitting shared board: "+ boardName +" to whiteboard server.");
+				endpoint.emit(WhiteboardServer.shareBoard, boardName);
 				log.info("Peer " + peerport + " successfully shared board "+boardName);
 			} else {
-				clientManager.emit(WhiteboardServer.unshareBoard, boardName);
+				System.out.println("Transmitting unshared board: "+ boardName +" to whiteboard server.");
+				endpoint.emit(WhiteboardServer.unshareBoard, boardName);
 				log.info("Peer " + peerport + " successfully unshared board "+boardName);
 			}
-			// Done sharing board info, shutting down clientManager
+			// Successfully transmitted board info, terminate session
+			clientManager.shutdown();
+		}).on(WhiteboardServer.error, (args)->{
+			String rejectedBoardName = (String) args[0];
+			System.out.println("Whiteboard server failed to (un)share board: "
+					+rejectedBoardName);
 			clientManager.shutdown();
 		}).on(PeerManager.peerStopped, (args)->{
 			Endpoint endpoint = (Endpoint)args[0];
-			System.out.println("Disconnected from the index server: "+endpoint.getOtherEndpointId());
-			clientManager.shutdown();
+			System.out.println("Disconnected from the server: "+endpoint.getOtherEndpointId());
 		}).on(PeerManager.peerError, (args)->{
 			Endpoint endpoint = (Endpoint)args[0];
-			System.out.println("There was an error communicating with the index server: "
+			System.out.println("There was an error communicating with the server: "
 					+endpoint.getOtherEndpointId());
-			clientManager.shutdown();
 		});
 		clientManager.start();
+		clientManager.join();
 
 	}
 	
@@ -410,8 +423,6 @@ public class WhiteboardApp {
 	 */
 	public void waitToFinish() {
 		peerManager.joinWithClientManagers();
-		peerManager.shutdown();
-
 	}
 	
 	/**
@@ -542,8 +553,10 @@ public class WhiteboardApp {
 			deleteBoard(board.getName());
 		});
     	whiteboards.values().forEach((whiteboard)->{
-    		
+
     	});
+    	peerManager.shutdown();
+		Utils.getInstance().cleanUp();
 	}
 	
 	
