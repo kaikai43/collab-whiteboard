@@ -88,6 +88,11 @@ public class WhiteboardServer {
 	private static int port = Utils.indexServerPort;
 
 	/**
+	 * All endpoints currently connected to index server
+	 */
+	public static final HashSet<Endpoint> endpoints = new HashSet<Endpoint>();
+
+	/**
 	 * Storage of boards and their hosting Whiteboard peer
 	 * host:port -> boardId
 	 */
@@ -148,6 +153,26 @@ public class WhiteboardServer {
 			sharedBoards.remove(data);
 		}
 	}
+
+	/**
+	 * Adds endpoints currently connected to index server
+	 * @param endpoint
+	 */
+	private static void addEndpoint(Endpoint endpoint){
+		synchronized (endpoints) {
+			endpoints.add(endpoint);
+		}
+	}
+
+	/**
+	 * Remove endpoints from list of endpoint currently connected to index server
+	 * @param endpoint
+	 */
+	private static void removeEndpoint(Endpoint endpoint){
+		synchronized (endpoints) {
+			endpoints.remove(endpoint);
+		}
+	}
 	
 	private static void help(Options options){
 		String header = "PB Whiteboard Server for Unimelb COMP90015\n\n";
@@ -202,13 +227,16 @@ public class WhiteboardServer {
 		serverManager.on(ServerManager.sessionStarted,(eventArgs)-> {
 			Endpoint endpoint = (Endpoint)eventArgs[0];
 			log.info("Client session started: "+endpoint.getOtherEndpointId());
+			addEndpoint(endpoint);
 			endpoint.on(shareBoard, (eventArgs2)->{
 				String boardName = (String) eventArgs2[0];
 				log.info("Received shared board: "+boardName);
 				sharedBoardsInsert(boardName);
 				// Pass on boardName to other clients
-				log.info("Transmitting board share to all peers.");
-				endpoint.emit(sharingBoard, boardName);
+				log.info("Transmitting board share to all connected peers.");
+				for(Endpoint e: endpoints){
+					e.emit(sharingBoard, boardName);
+				}
 			}).on(unshareBoard, (eventArgs2)->{
 				String boardName = (String) eventArgs2[0];
 				log.info("Received unshared board: "+boardName);
@@ -219,7 +247,9 @@ public class WhiteboardServer {
 					endpoint.emit(error, "Board does not exist.");
 				}
 				log.info("Transmitting board unshare to all peers.");
-				endpoint.emit(unsharingBoard, boardName);
+				for(Endpoint e: endpoints){
+					e.emit(unsharingBoard, boardName);
+				}
 			});
 			// Sharing currently share boards to newly connected clients
 			if (!sharedBoards.isEmpty()){
@@ -228,6 +258,10 @@ public class WhiteboardServer {
 					endpoint.emit(sharingBoard, board);
 				}
 			}
+		}).on(ServerManager.sessionStopped,(eventArgs)->{
+			Endpoint endpoint = (Endpoint)eventArgs[0];
+			log.info("Client session ended: "+endpoint.getOtherEndpointId());
+			removeEndpoint(endpoint);
 		}).on(IOThread.ioThread, (eventArgs)->{
 			String peerport = (String) eventArgs[0];
 			// we don't need this info, but let's log it

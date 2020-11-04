@@ -192,6 +192,7 @@ public class WhiteboardApp {
 
 	PeerManager peerManager;
 	ClientManager indexClientManager; // Client manager that connects to index server
+	Endpoint indexEndpoint; // Endpoint that connects to the index server
 	
 	/*
 	 * GUI objects, you probably don't need to modify these things... you don't
@@ -341,33 +342,38 @@ public class WhiteboardApp {
 	private void shareBoards(ClientManager clientManager) {
 		clientManager.on(PeerManager.peerStarted, (args)-> {
 			Endpoint endpoint = (Endpoint) args[0];
+			this.indexEndpoint = endpoint;
 			System.out.println("Connected to whiteboard server: " + endpoint.getOtherEndpointId());
 			System.out.println("Listening to boards shared....");
 			endpoint.on(WhiteboardServer.error, (args2) -> {
 				String errorMessage = (String) args2[0];
 				System.out.println("Whiteboard server failed to share boards: "
 						+ errorMessage);
+			}).on(WhiteboardServer.sharingBoard, (args2)-> {
+				String sharedBoardName = (String) args2[0];
+				// create a remote board if not in whiteboards list
+				System.out.println("Received shared board: "+ sharedBoardName);
+				if (!whiteboards.containsKey(sharedBoardName)){
+					Whiteboard whiteboard = new Whiteboard(sharedBoardName,true);
+					addBoard(whiteboard,false);
+				} else {
+					// Peer is owner of board, or already has board, do nothing
+				}
+			}).on(WhiteboardServer.unsharingBoard, (args2)-> {
+				String unsharedBoardName = (String) args2[0];
+				System.out.println("Received unshared board: "+unsharedBoardName);
+				// remove a remote board if not in whiteboards list
+				if (!whiteboards.containsKey(unsharedBoardName)){
+					deleteBoard(unsharedBoardName);
+				} else {
+					//Board does not exist, log info and do nothing
+					log.info("The unshared board is not present in peer. Continuing...");
+				}
 			});
-		}).on(WhiteboardServer.sharingBoard, (args2)-> {
-			String sharedBoardName = (String) args2[0];
-			// create a remote board if not in whiteboards list
-			System.out.println("Received shared board: "+ sharedBoardName);
-			if (!whiteboards.containsKey(sharedBoardName)){
-				Whiteboard whiteboard = new Whiteboard(sharedBoardName,true);
-				addBoard(whiteboard,false);
-			} else {
-				// Peer is owner of board, or already has board, do nothing
-			}
-		}).on(WhiteboardServer.unsharingBoard, (args2)-> {
-			String unsharedBoardName = (String) args2[0];
-			System.out.println("Received unshared board: "+unsharedBoardName);
-			// remove a remote board if not in whiteboards list
-			if (!whiteboards.containsKey(unsharedBoardName)){
-				deleteBoard(unsharedBoardName);
-			} else {
-				//Board does not exist, log info and do nothing
-				log.info("The unshared board is not present in peer. Continuing...");
-			}
+		}).on(WhiteboardServer.error, (args)->{
+			String rejectedBoardName = (String) args[0];
+			System.out.println("Whiteboard server failed to (un)share board: "
+					+rejectedBoardName);
 		}).on(PeerManager.peerStopped, (args)->{
 			Endpoint endpoint = (Endpoint)args[0];
 			System.out.println("Disconnected from the index server: "+endpoint.getOtherEndpointId());
@@ -384,7 +390,12 @@ public class WhiteboardApp {
 	 * Open client connection to index server and send board info to update the index
 	 */
 	public void uploadSharedBoard(String boardName, String peerport) throws InterruptedException, UnknownHostException {
-		ClientManager clientManager = peerManager.connect(whiteboardServerPort, whiteboardServerHost);
+
+		System.out.println("Transmitting shared board: "+ boardName +" to whiteboard server.");
+		indexEndpoint.emit(WhiteboardServer.shareBoard, boardName);
+		log.info("Peer " + peerport + " successfully shared board "+boardName);
+
+		/*ClientManager clientManager = peerManager.connect(whiteboardServerPort, whiteboardServerHost);
 		clientManager.on(PeerManager.peerStarted, (args)->{
 			Endpoint endpoint = (Endpoint)args[0];
 			System.out.println("Connected to whiteboard server: "+endpoint.getOtherEndpointId());
@@ -407,14 +418,19 @@ public class WhiteboardApp {
 					+endpoint.getOtherEndpointId());
 		});
 		clientManager.start();
-		clientManager.join(); // wait for board share to finish
+		clientManager.join(); // wait for board share to finish*/
 	}
 
 	/**
 	 * Open client connection to index server and unshare board to update the index
 	 */
 	private void uploadUnsharedBoard(String boardName, String peerport) throws InterruptedException, UnknownHostException {
-		ClientManager clientManager = peerManager.connect(whiteboardServerPort, whiteboardServerHost);
+
+		System.out.println("Transmitting unshared board: "+ boardName +" to whiteboard server.");
+		indexEndpoint.emit(WhiteboardServer.shareBoard, boardName);
+		log.info("Peer " + peerport + " successfully shared board "+boardName);
+
+		/*ClientManager clientManager = peerManager.connect(whiteboardServerPort, whiteboardServerHost);
 		clientManager.on(PeerManager.peerStarted, (args)->{
 			Endpoint endpoint = (Endpoint)args[0];
 			System.out.println("Connected to whiteboard server: "+endpoint.getOtherEndpointId());
@@ -437,7 +453,7 @@ public class WhiteboardApp {
 					+endpoint.getOtherEndpointId());
 		});
 		clientManager.start();
-		clientManager.join(); // wait for board unshare to finish
+		clientManager.join(); // wait for board unshare to finish*/
 	}
 
 	/******
