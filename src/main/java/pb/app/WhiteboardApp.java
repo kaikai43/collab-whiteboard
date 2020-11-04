@@ -1,5 +1,6 @@
 package pb.app;
 
+import org.apache.commons.codec.binary.Base64;
 import pb.IndexServer;
 import pb.WhiteboardServer;
 import pb.managers.ClientManager;
@@ -19,6 +20,7 @@ import java.awt.event.ItemEvent;
 import java.awt.event.ItemListener;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
+import java.io.IOException;
 import java.net.UnknownHostException;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -302,11 +304,6 @@ public class WhiteboardApp {
 	 * Methods called from events.
 	 * 
 	 ******/
-	
-	// From whiteboard server
-	
-	
-	// From whiteboard peer
 
 	/**
 	 * Start up peer manager
@@ -314,10 +311,27 @@ public class WhiteboardApp {
 	private void startPeerManager() {
 		peerManager.on(PeerManager.peerStarted, (args)->{
 			Endpoint endpoint = (Endpoint)args[0];
-			System.out.println("Connected from peer: "+endpoint.getOtherEndpointId());
-			System.out.println("Sharing boards to peer....");
-				// Peer shares board info
-			}).on(PeerManager.peerServerManager, (args)->{
+			System.out.println("Connection from peer: "+endpoint.getOtherEndpointId());
+			System.out.println("Listening for shared boards from peer....");
+			// Peer shares board info
+			endpoint.on(listenBoard, (args2)->{
+				String boardToListen = (String) args2[0];
+				// Create a thread, send current board data (boardData) to receiver
+				//
+				// Propagate these updates (boardData)
+				endpoint.emit(boardData, )
+			}).on(unlistenBoard, (args2)->{
+				String boardToUnlisten = (String) args2[0];
+				// Shutdown thread
+			});
+		}).on(PeerManager.peerStopped,(args)->{
+			Endpoint endpoint = (Endpoint)args[0];
+			System.out.println("Disconnected from whiteboard peer: "+endpoint.getOtherEndpointId());
+		}).on(PeerManager.peerError,(args)->{
+			Endpoint endpoint = (Endpoint)args[0];
+			System.out.println("There was an error communicating with the whiteboard peer: "
+					+endpoint.getOtherEndpointId());
+		}).on(PeerManager.peerServerManager, (args)->{
 			ServerManager serverManager = (ServerManager)args[0];
 			serverManager.on(IOThread.ioThread, (args2)->{
 				String peerport = (String) args2[0];
@@ -336,6 +350,8 @@ public class WhiteboardApp {
 		peerManager.start();
 	}
 
+	
+	// From whiteboard server
 	/**
 	 * Subscribe to boards shared from the index server
 	 */
@@ -352,13 +368,15 @@ public class WhiteboardApp {
 			}).on(WhiteboardServer.sharingBoard, (args2)-> {
 				String sharedBoardName = (String) args2[0];
 				// create a remote board if not in whiteboards list
-				System.out.println("Received shared board: "+ sharedBoardName);
 				if (!whiteboards.containsKey(sharedBoardName)){
+					System.out.println("Received shared board: "+ sharedBoardName);
 					Whiteboard whiteboard = new Whiteboard(sharedBoardName,true);
 					addBoard(whiteboard,false);
 				} else {
 					// Peer is owner of board, or already has board, do nothing
 				}
+				// Create a thread and request board data from peer
+				getBoardDataFromPeer(sharedBoardName);
 			}).on(WhiteboardServer.unsharingBoard, (args2)-> {
 				String unsharedBoardName = (String) args2[0];
 				System.out.println("Received unshared board: "+unsharedBoardName);
@@ -383,78 +401,69 @@ public class WhiteboardApp {
 					+endpoint.getOtherEndpointId());
 		});
 		clientManager.start();
-		// Thread doesnt end until peerManager.shutdown() called, no need to .join()?
+		// Thread doesnt end until peerManager.shutdown() called, no need to .join()
 	}
 
 	/**
-	 * Open client connection to index server and send board info to update the index
+	 * Emit shared board event using endpoint connected to index server
 	 */
-	public void uploadSharedBoard(String boardName, String peerport) throws InterruptedException, UnknownHostException {
-
+	private void uploadSharedBoard(String boardName, String peerport) {
 		System.out.println("Transmitting shared board: "+ boardName +" to whiteboard server.");
 		indexEndpoint.emit(WhiteboardServer.shareBoard, boardName);
 		log.info("Peer " + peerport + " successfully shared board "+boardName);
-
-		/*ClientManager clientManager = peerManager.connect(whiteboardServerPort, whiteboardServerHost);
-		clientManager.on(PeerManager.peerStarted, (args)->{
-			Endpoint endpoint = (Endpoint)args[0];
-			System.out.println("Connected to whiteboard server: "+endpoint.getOtherEndpointId());
-			System.out.println("Transmitting shared board: "+ boardName +" to whiteboard server.");
-			endpoint.emit(WhiteboardServer.shareBoard, boardName);
-			log.info("Peer " + peerport + " successfully shared board "+boardName);
-			// Successfully transmitted board info, terminate session
-			clientManager.shutdown();
-		}).on(WhiteboardServer.error, (args)->{
-			String rejectedBoardName = (String) args[0];
-			System.out.println("Whiteboard server failed to (un)share board: "
-					+rejectedBoardName);
-			clientManager.shutdown();
-		}).on(PeerManager.peerStopped, (args)->{
-			Endpoint endpoint = (Endpoint)args[0];
-			System.out.println("Disconnected from the server: "+endpoint.getOtherEndpointId());
-		}).on(PeerManager.peerError, (args)->{
-			Endpoint endpoint = (Endpoint)args[0];
-			System.out.println("There was an error communicating with the server: "
-					+endpoint.getOtherEndpointId());
-		});
-		clientManager.start();
-		clientManager.join(); // wait for board share to finish*/
 	}
 
 	/**
-	 * Open client connection to index server and unshare board to update the index
+	 * Emit shared board event using endpoint connected to index server
 	 */
-	private void uploadUnsharedBoard(String boardName, String peerport) throws InterruptedException, UnknownHostException {
-
+	private void uploadUnsharedBoard(String boardName, String peerport) {
 		System.out.println("Transmitting unshared board: "+ boardName +" to whiteboard server.");
 		indexEndpoint.emit(WhiteboardServer.shareBoard, boardName);
 		log.info("Peer " + peerport + " successfully shared board "+boardName);
+	}
 
-		/*ClientManager clientManager = peerManager.connect(whiteboardServerPort, whiteboardServerHost);
+
+	// From whiteboard peer
+
+	/**
+	 * Connect to whiteboard peer that is hosting the shared board and obtain board info
+	 *
+	 * @param boardName Board shared by another peer, peer:port:boardid
+	 */
+	private void getBoardDataFromPeer(String boardName){
+		String host = getIP(boardName) + ":" + getPort(boardName); // For logging purposes
+		ClientManager clientManager;
+		try {
+			clientManager = peerManager.connect(getPort(boardName), getIP(boardName));
+		} catch (InterruptedException e) {
+			System.out.println("Interrupted while trying to connect to peer host: "+host);
+			return;
+		} catch (UnknownHostException e) {
+			System.out.println("Could not find the peer host: "+host);
+			return;
+		}
 		clientManager.on(PeerManager.peerStarted, (args)->{
 			Endpoint endpoint = (Endpoint)args[0];
-			System.out.println("Connected to whiteboard server: "+endpoint.getOtherEndpointId());
-			System.out.println("Unsharing board: "+ boardName +" from whiteboard server.");
-			endpoint.emit(WhiteboardServer.unshareBoard, boardName);
-			log.info("Peer " + peerport + " successfully unshared board "+boardName);
-			// Successfully unshared board , terminate session
-			clientManager.shutdown();
-		}).on(WhiteboardServer.error, (args)->{
-			String rejectedBoardName = (String) args[0];
-			System.out.println("Whiteboard server failed to (un)share board: "
-					+rejectedBoardName);
-			clientManager.shutdown();
+			endpoint.on(fileContents,(args2)->{
+				// something something
+			}).on(fileError, (args2)->{
+				System.out.println("Error downloading file");
+				clientManager.shutdown();
+			});
+			System.out.println("Getting file "+parts[2]+" from "+endpoint.getOtherEndpointId());
+			endpoint.emit(getFile, parts[2]);
 		}).on(PeerManager.peerStopped, (args)->{
 			Endpoint endpoint = (Endpoint)args[0];
-			System.out.println("Disconnected from the server: "+endpoint.getOtherEndpointId());
+			System.out.println("Disconnected from peer: "+endpoint.getOtherEndpointId());
 		}).on(PeerManager.peerError, (args)->{
 			Endpoint endpoint = (Endpoint)args[0];
-			System.out.println("There was an error communicating with the server: "
+			System.out.println("There was error while communication with peer: "
 					+endpoint.getOtherEndpointId());
 		});
 		clientManager.start();
-		clientManager.join(); // wait for board unshare to finish*/
 	}
+
+
 
 	/******
 	 * 
