@@ -317,9 +317,9 @@ public class WhiteboardApp {
 			endpoint.on(listenBoard, (args2)->{
 				String boardToListen = (String) args2[0];
 				// Create a thread, send current board data (boardData) to receiver
-				//
+				// Use the same thread to send and receive updates
 				// Propagate these updates (boardData)
-				endpoint.emit(boardData, )
+				endpoint.emit(boardData, );
 			}).on(unlistenBoard, (args2)->{
 				String boardToUnlisten = (String) args2[0];
 				// Shutdown thread
@@ -444,14 +444,19 @@ public class WhiteboardApp {
 		}
 		clientManager.on(PeerManager.peerStarted, (args)->{
 			Endpoint endpoint = (Endpoint)args[0];
-			endpoint.on(fileContents,(args2)->{
+			System.out.println("Connection to host peer: "+endpoint.getOtherEndpointId());
+			endpoint.on(boardData,(args2)->{
 				// something something
-			}).on(fileError, (args2)->{
-				System.out.println("Error downloading file");
+			}).on(boardDeleted, (args2)->{
+				String deletedBoardName = (String) args2[0];
+				System.out.println("Host peer deleted board: "+deletedBoardName );
+				clientManager.shutdown();
+			}).on(boardError, (args2)->{
+				System.out.println("Error receiving board data");
 				clientManager.shutdown();
 			});
-			System.out.println("Getting file "+parts[2]+" from "+endpoint.getOtherEndpointId());
-			endpoint.emit(getFile, parts[2]);
+			System.out.println("Getting board "+boardName+" from "+endpoint.getOtherEndpointId());
+			endpoint.emit(getBoardData, boardName);
 		}).on(PeerManager.peerStopped, (args)->{
 			Endpoint endpoint = (Endpoint)args[0];
 			System.out.println("Disconnected from peer: "+endpoint.getOtherEndpointId());
@@ -587,22 +592,10 @@ public class WhiteboardApp {
 		if(selectedBoard!=null) {
         	selectedBoard.setShared(share);
         	if (share){
-				try {
-					uploadSharedBoard(selectedBoard.getName(), peerport);
-				} catch (InterruptedException e) {
-					System.out.println("Interrupted while trying to connect to index server to share board.");
-				} catch (UnknownHostException e) {
-					System.out.println("Unable to find host address while sharing board.");
-				}
+				uploadSharedBoard(selectedBoard.getName(), peerport);
 			}
 			else {
-				try {
-					uploadUnsharedBoard(selectedBoard.getName(), peerport);
-				} catch (InterruptedException e) {
-					System.out.println("Interrupted while trying to connect to index server to unshare board.");
-				} catch (UnknownHostException e) {
-					System.out.println("Unable to find host address while unsharing board.");
-				}
+				uploadUnsharedBoard(selectedBoard.getName(), peerport);
 			}
 		} else {
         	log.severe("there is no selected board");
@@ -619,13 +612,8 @@ public class WhiteboardApp {
 			deleteBoard(board.getName());
 		});
     	whiteboards.values().forEach((whiteboard)->{
-			try {
-				uploadUnsharedBoard(whiteboard.getName(), peerport);
-			} catch (InterruptedException e) {
-				System.out.println("Interrupted while closing GUI.");
-			} catch (UnknownHostException e) {
-				System.out.println("Whiteboard server not found while closing GUI.");
-			}
+    		//Unshare currently shared boards
+			uploadUnsharedBoard(whiteboard.getName(), peerport);
 		});
     	peerManager.shutdown();
 		Utils.getInstance().cleanUp();
