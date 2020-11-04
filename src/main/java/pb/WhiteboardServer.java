@@ -129,17 +129,6 @@ public class WhiteboardServer {
 		synchronized (sharedBoards){
 			sharedBoards.add(data);
 		}
-/*		//HashMap version of same implementation
-		String host = getBoardHost(data);
-		String boardId = getBoardId(data);
-		synchronized (keyValueMap) {
-			if(!keyValueMap.containsKey(host)) {
-				keyValueMap.put(host, new HashSet<String>());
-			}
-			Set<String> sharedBoards=keyValueMap.get(host);
-			sharedBoards.add(boardId);
-		}
-*/
 	}
 
 	/**
@@ -246,7 +235,7 @@ public class WhiteboardServer {
 					//Peer trying to unshare a board that does not exist
 					endpoint.emit(error, "Board does not exist.");
 				}
-				log.info("Transmitting board unshare to all peers.");
+				log.info("Transmitting board unshare to all connected peers.");
 				for(Endpoint e: endpoints){
 					e.emit(unsharingBoard, boardName);
 				}
