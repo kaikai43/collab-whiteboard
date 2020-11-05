@@ -313,16 +313,33 @@ public class WhiteboardApp {
 			Endpoint endpoint = (Endpoint)args[0];
 			System.out.println("Connection from peer: "+endpoint.getOtherEndpointId());
 			System.out.println("Listening for shared boards from peer....");
-			// Peer shares board info
 			endpoint.on(listenBoard, (args2)->{
 				String boardToListen = (String) args2[0];
-				// Create a thread, send current board data (boardData) to receiver
-				// Use the same thread to send and receive updates
-				// Propagate these updates (boardData)
+				// Start by creating board string and send it (boardData) to receiver
 				endpoint.emit(boardData, );
+				// Add endpoint to list of endpoints used to send and receive updates
+
+				// Use the same thread to send and receive updates
+				// Propagate these updates (via boardData)
+
 			}).on(unlistenBoard, (args2)->{
 				String boardToUnlisten = (String) args2[0];
-				// Shutdown thread
+				// Remove endpoint from list of listening endpoints
+			}).on(boardPathUpdate, (args2)->{
+				String boardNameAndData = (String) args2[0]; //host:port:boardid%ver%path
+				// accept and draw path (via whiteboard.addPath) if version number is same (w/o path applied yet)
+				// emit boardPathAccepted to all endpoints listening to current board
+			}).on(boardUndoUpdate, (args2)->{
+				String boardNameAndVer = (String) args2[0];
+				// accept and undo (via whiteboard.addPath) if version number is same (w/o undo applied yet)
+				// emit boardUndoAccepted to all endpoints listening to current board
+			}).on(boardClearUpdate, (args2)->{
+				String boardNameAndVer = (String) args2[0];
+				// accept and clear (via whiteboard.addPath) if version number is same (w/o clear applied yet)
+				// emit boardClearAccepted to all endpoints listening to current board
+			}).on(boardDeleted, (args2)->{
+				String boardName = (String) args2[0];
+				// Remove endpoint from list of listening endpoints
 			});
 		}).on(PeerManager.peerStopped,(args)->{
 			Endpoint endpoint = (Endpoint)args[0];
@@ -363,25 +380,17 @@ public class WhiteboardApp {
 			System.out.println("Listening to boards shared....");
 			endpoint.on(WhiteboardServer.error, (args2) -> {
 				String errorMessage = (String) args2[0];
-				System.out.println("Whiteboard server failed to share boards: "
+				System.out.println("Whiteboard server failed to share board: "
 						+ errorMessage);
 			}).on(WhiteboardServer.sharingBoard, (args2)-> {
 				String sharedBoardName = (String) args2[0];
-				// create a remote board if not in whiteboards list
-				if (!whiteboards.containsKey(sharedBoardName)){
-					System.out.println("Received shared board: "+ sharedBoardName);
-					Whiteboard whiteboard = new Whiteboard(sharedBoardName,true);
-					addBoard(whiteboard,false);
-				} else {
-					// Peer is owner of board, or already has board, do nothing
-				}
 				// Create a thread and request board data from peer
 				getBoardDataFromPeer(sharedBoardName);
 			}).on(WhiteboardServer.unsharingBoard, (args2)-> {
 				String unsharedBoardName = (String) args2[0];
 				System.out.println("Received unshared board: "+unsharedBoardName);
 				// remove a remote board if not in whiteboards list
-				if (!whiteboards.containsKey(unsharedBoardName)){
+				if (whiteboards.containsKey(unsharedBoardName)){
 					deleteBoard(unsharedBoardName);
 				} else {
 					//Board does not exist, log info and do nothing
@@ -444,7 +453,7 @@ public class WhiteboardApp {
 		}
 		clientManager.on(PeerManager.peerStarted, (args)->{
 			Endpoint endpoint = (Endpoint)args[0];
-			System.out.println("Connection to host peer: "+endpoint.getOtherEndpointId());
+			System.out.println("Connected to host peer: "+endpoint.getOtherEndpointId());
 			endpoint.on(boardData,(args2)->{
 				// something something
 			}).on(boardDeleted, (args2)->{
@@ -456,6 +465,18 @@ public class WhiteboardApp {
 				clientManager.shutdown();
 			});
 			System.out.println("Getting board "+boardName+" from "+endpoint.getOtherEndpointId());
+			// create a remote board if not in whiteboards list
+			if (!whiteboards.containsKey(boardName)){
+				System.out.println("Received shared board: "+ boardName);
+				Whiteboard whiteboard = new Whiteboard(boardName,true);
+				addBoard(whiteboard,false);
+			} else {
+				// Peer is owner of board, or already has board, do nothing
+			}
+			// If board is selected, emit listening event
+			System.out.println("Listening to board from host peer: "+ boardName);
+			endpoint.emit(listenBoard, boardName);
+			System.out.println("Requesting board data from host peer: "+ boardName);
 			endpoint.emit(getBoardData, boardName);
 		}).on(PeerManager.peerStopped, (args)->{
 			Endpoint endpoint = (Endpoint)args[0];
@@ -581,6 +602,7 @@ public class WhiteboardApp {
 	 * The variable selectedBoard has been set.
 	 */
 	public void selectedABoard() {
+		//Remote: get board data from host peer, then use thread listen to updates
 		drawSelectedWhiteboard();
 		log.info("selected board: "+selectedBoard.getName());
 	}
