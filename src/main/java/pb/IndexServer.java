@@ -103,12 +103,6 @@ public class IndexServer {
 	 * been seen. We will use this to give the most recent peer that has the file.
 	 */
 	public static final Map<String,Long> lastTimeSeen=new HashMap<>();
-
-	/**
-	 * password option
-	 */
-
-	public static String password = null;
 	
 	/**
 	 * The default port number for the server.
@@ -218,8 +212,9 @@ public class IndexServer {
     	// parse command line options
         Options options = new Options();
         options.addOption("port",true,"server port, an integer");
-        options.addOption("password",true,"password for admin server");
+        options.addOption("password",true,"password for server");
         
+       
         CommandLineParser parser = new DefaultParser();
         CommandLine cmd = null;
         try {
@@ -227,16 +222,6 @@ public class IndexServer {
 		} catch (ParseException e1) {
 			help(options);
 		}
-
-        if(cmd.hasOption("password")){
-        		password = cmd.getOptionValue("password");
-        		System.out.println(password);
-		}
-        /*
-        else{
-        	String password = null;
-		}
-         */
         
         if(cmd.hasOption("port")){
         	try{
@@ -247,24 +232,15 @@ public class IndexServer {
 			}
         }
         
-        /**
-		 * TODO: for Project 2B. Create a "-password" option that reads a string
-		 * password from the user at the command line. Use the
-		 * ServerManager(port,password) initializer (that needs to be created by you in
-		 * ServerManager.java) if the password was given.
-		 */
-        
-        
         // create a server manager and setup event handlers
-		// declare server manager outside if
-		ServerManager serverManager;
-		if(password!=null){
-			serverManager = new ServerManager(port,password);
-		}
-		else{
-			serverManager = new ServerManager(port);
-		}
-
+        ServerManager serverManager;
+        
+        if(cmd.hasOption("password")) {
+        	serverManager = new ServerManager(port,cmd.getOptionValue("password"));
+        } else {
+        	serverManager = new ServerManager(port);
+        }
+        
         // event handlers
         // we must define the event handler callbacks BEFORE starting
         // the server, so that we don't miss any events.
@@ -289,9 +265,7 @@ public class IndexServer {
         		String peerport = (String) eventArgs2[0];
         		log.info("Received peer update: "+peerport);
         		peerUpdate(peerport);
-        	})/**.on(shutDownRequest, (eventArgs2)->{
-        		//log.info("Received shutdown request");
-			})**/;
+        	});
         }).on(ServerManager.sessionStopped,(eventArgs)->{
         	Endpoint endpoint = (Endpoint)eventArgs[0];
         	log.info("Client session ended: "+endpoint.getOtherEndpointId());
@@ -307,12 +281,7 @@ public class IndexServer {
         // start up the server
         log.info("PB Index Server starting up");
         serverManager.start();
-
-		//Utils.getInstance().cleanUp();
-        try{
-        	serverManager.join();
-		}catch(InterruptedException e){}
-		Utils.getInstance().cleanUp();
-	}
+        
+    }
 
 }
