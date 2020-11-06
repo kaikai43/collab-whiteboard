@@ -336,8 +336,8 @@ public class WhiteboardApp {
 	}
 
 	/**
-	 *
-	 * @param peerport: IP of peer host
+	 * Actions taken upon peer manager initialisation of its server manager
+	 * @param peerport: IP of peer host, host:port
 	 */
 	private void onPeerStartup(String peerport){
 		log.info(peerport +" successfully established as peer host.");
@@ -416,6 +416,9 @@ public class WhiteboardApp {
 		System.out.println("Transmitting shared board: "+ boardName +" to whiteboard server.");
 		indexEndpoint.emit(WhiteboardServer.shareBoard, boardName);
 		log.info("Peer " + peerport + " successfully shared board "+boardName);
+		log.info("Initialising list of listeners for board: "+boardName);
+		Set<Endpoint> activeEndpoints = new HashSet<Endpoint>();
+		listeningPeers.put(boardName, activeEndpoints);
 	}
 
 	/**
@@ -423,7 +426,7 @@ public class WhiteboardApp {
 	 */
 	private void uploadUnsharedBoard(String boardName, String peerport) {
 		System.out.println("Transmitting unshared board: "+ boardName +" to whiteboard server.");
-		indexEndpoint.emit(WhiteboardServer.shareBoard, boardName);
+		indexEndpoint.emit(WhiteboardServer.unshareBoard, boardName);
 		log.info("Peer " + peerport + " successfully shared board "+boardName);
 	}
 
@@ -463,7 +466,7 @@ public class WhiteboardApp {
 	}
 
 	/**
-	 * Peer action upon starting connection with peer host
+	 * Peer actions upon starting connection with peer host
 	 * @param clientManager: clientManager responsible for connection to peer host
 	 * @param endpoint: endpoint responsible for connection to peer host
 	 * @param boardName: Board shared by peer host, peer:port:boardid
@@ -473,7 +476,19 @@ public class WhiteboardApp {
 		endpoint.on(boardData,(args2)->{
 			String receivedData = (String) args2[0];
 			onBoardData(receivedData);
+		}).on(boardPathAccepted, (args2)->{
+			String boardNameAndData = (String) args2[0];
+			onBoardPathAccepted(boardNameAndData);
+		}).on(boardUndoAccepted, (args2)->{
+			String boardNameAndVer = (String) args2[0];
+			// accept and undo (via whiteboard.addPath) if version number is same (w/o undo applied yet)
+			// emit boardUndoAccepted to all endpoints listening to current board
+		}).on(boardClearAccepted, (args2)->{
+			String boardNameAndVer = (String) args2[0];
+			// accept and clear (via whiteboard.addPath) if version number is same (w/o clear applied yet)
+			// emit boardClearAccepted to all endpoints listening to current board
 		}).on(boardDeleted, (args2)->{
+			//TODO
 			String deletedBoardName = (String) args2[0];
 			System.out.println("Host peer deleted board: "+deletedBoardName);
 			clientManager.shutdown();
@@ -482,7 +497,6 @@ public class WhiteboardApp {
 			clientManager.shutdown();
 		});
 		System.out.println("Getting board "+boardName+" from "+endpoint.getOtherEndpointId());
-		// If board is selected, emit listening event
 		System.out.println("Listening to board from peer host: "+ boardName);
 		endpoint.emit(listenBoard, boardName);
 		System.out.println("Requesting board data from peer host: "+ boardName);
@@ -490,7 +504,7 @@ public class WhiteboardApp {
 	}
 
 	/**
-	 * Method to call upon receiving boardData event, involves board initialisation
+	 * Actions upon receiving boardData event, involves board initialisation
 	 * @param boardNameAndData: string received through boardData event
 	 */
 	private void onBoardData(String boardNameAndData){
@@ -504,6 +518,23 @@ public class WhiteboardApp {
 	}
 
 	/**
+	 * Actions taken by clients listening to particular board
+	 * Basically, just redraw board according to data received from peer host
+	 *
+	 * @param boardNameAndData: String data received from peer host, host:port:boardid%ver%PATHS
+	 */
+	private void onBoardPathAccepted(String boardNameAndData){
+		String boardName = getBoardName(boardNameAndData);
+		String boardData = getBoardData(boardNameAndData);
+		Whiteboard boardToUpdate = whiteboards.get(boardName);
+		boardToUpdate.whiteboardFromString(boardName, boardData);
+		// Redraw board if selected
+		if (selectedBoard == boardToUpdate) {
+			drawSelectedWhiteboard();
+		}
+	}
+
+	/**
 	 * Actions taken by peer host upon connection from client to listen to a board
 	 * @param endpoint: endpoint responsible for connection to peer client
 	 */
@@ -512,19 +543,16 @@ public class WhiteboardApp {
 		System.out.println("Listening for shared boards from peer....");
 		endpoint.on(listenBoard, (args2)->{
 			String boardToListen = (String) args2[0];
-			onBoardListen(boardToListen, endpoint);
+			onBoardListen(boardToListen, endpoint); // Add endpoint ot list of listening endpoints
 		}).on(unlistenBoard, (args2)->{
 			String boardToUnlisten = (String) args2[0];
-			// Remove endpoint from list of listening endpoints
-			onBoardUnlisten(boardToUnlisten, endpoint);
+			onBoardUnlisten(boardToUnlisten, endpoint); // Remove endpoint from list of listening endpoints
 		}).on(getBoardData, (args2)->{
 			String boardToGet = (String) args2[0];
-			// Convert board to string
-			onGetBoardData(boardToGet, endpoint);
+			onGetBoardData(boardToGet, endpoint); // Convert board to string and send to listening client
 		}).on(boardPathUpdate, (args2)->{
-			String boardNameAndData = (String) args2[0]; //host:port:boardid%ver%path
-			// accept and draw path (via whiteboard.addPath) if version number is same (w/o path applied yet)
-			// emit boardPathAccepted to all endpoints listening to current board
+			String boardNameAndData = (String) args2[0];
+			onBoardPathUpdate(boardNameAndData, endpoint);
 		}).on(boardUndoUpdate, (args2)->{
 			String boardNameAndVer = (String) args2[0];
 			// accept and undo (via whiteboard.addPath) if version number is same (w/o undo applied yet)
@@ -539,7 +567,6 @@ public class WhiteboardApp {
 		});
 	}
 
-
 	/**
 	 * Add endpoint to list of endpoints currently listening to the board
 	 * @param boardName: Name of board to be listened
@@ -552,9 +579,7 @@ public class WhiteboardApp {
 				Set<Endpoint> activeEndpoints = listeningPeers.get(boardName);
 				activeEndpoints.add(endpoint);
 			} else {
-				Set<Endpoint> activeEndpoints = new HashSet<Endpoint>();
-				activeEndpoints.add(endpoint);
-				listeningPeers.put(boardName, activeEndpoints);
+				endpoint.emit(boardError, "Board is not shared!");
 			}
 		}
 	}
@@ -587,6 +612,42 @@ public class WhiteboardApp {
 		System.out.println("Transmitting board data: " + boardName
 				+ " to peer: "+ endpoint.getOtherEndpointId());
 		endpoint.emit(boardData, boardToGet.toString());
+	}
+
+	/**
+	 * Actions taken by host peer upon receiving update by a listening client
+	 * @param boardNameAndData: Info for board to be updated. host:port:boardid%ver%path
+	 * @param endpoint: Endpoint connected to peer that updates the hosted board
+	 */
+	private void onBoardPathUpdate(String boardNameAndData, Endpoint endpoint){
+		String boardName = getBoardName(boardNameAndData);
+		Long updatedBoardVersion = getBoardVersion(boardNameAndData);
+		String boardData = getBoardData(boardNameAndData);
+		synchronized (listeningPeers){
+			if (!listeningPeers.containsKey(boardName)){
+				System.out.println("Peer client updated a board that is not shared!");
+			} else {
+				Whiteboard boardToUpdate = whiteboards.get(boardName);
+				// If hosted board version one less than updated version
+				// add path and transmit to all listening peers
+				if (boardToUpdate.getVersion() == --updatedBoardVersion) {
+					boardToUpdate.whiteboardFromString(boardName, boardData);
+					// Redraw board if selected
+					if (selectedBoard==boardToUpdate) {
+						drawSelectedWhiteboard();
+					}
+					Set<Endpoint> activeEndpoints = listeningPeers.get(boardName);
+					for (Endpoint e: activeEndpoints){
+						// Skip transmission to peer client that first sent the update
+						if (e != endpoint){
+							e.emit(boardPathAccepted, boardNameAndData);
+						}
+					}
+				} else {
+					endpoint.emit(boardError, "Version mismatch with host peer!");
+				}
+			}
+		}
 	}
 
 	/******
@@ -651,10 +712,24 @@ public class WhiteboardApp {
 		if(selectedBoard!=null) {
 			if(!selectedBoard.addPath(currentPath,selectedBoard.getVersion())) {
 				// some other peer modified the board in between
+				System.out.println("Another peer modified the board while drawing." +
+						"Rejecting path drawn and redrawing board according to modification.");
 				drawSelectedWhiteboard(); // just redraw the screen without the path
 			} else {
 				// was accepted locally, so do remote stuff if needed
-				
+				// If is a remote board, emit updated board info to host peer
+				if (selectedBoard.isRemote()) {
+					listenEndpoint.emit(boardPathUpdate, selectedBoard.toString());
+				} else if (listeningPeers.containsKey(selectedBoard.getName())) {
+					// If is board hosted by peer, emit boardPathAcccepted to all listening peers
+					Set<Endpoint> activeEndpoints = listeningPeers.get(selectedBoard.getName());
+					if (!activeEndpoints.isEmpty()) {
+						for (Endpoint e: activeEndpoints){
+							e.emit(boardPathAccepted, selectedBoard.toString());
+						}
+					}
+				}
+				drawSelectedWhiteboard();
 			}
 		} else {
 			log.severe("path created without a selected board: "+currentPath);
