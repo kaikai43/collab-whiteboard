@@ -23,11 +23,7 @@ import java.awt.event.WindowEvent;
 import java.io.IOException;
 import java.net.UnknownHostException;
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Map;
+import java.util.*;
 import java.util.logging.Logger;
 
 import javax.swing.BoxLayout;
@@ -192,9 +188,18 @@ public class WhiteboardApp {
 	 */
 	private static String whiteboardServerHost; // default host for the index server
 
+
+
 	PeerManager peerManager;
 	ClientManager indexClientManager; // Client manager that connects to index server
 	Endpoint indexEndpoint; // Endpoint that connects to the index server
+	ClientManager listenClientManager; // Client manager that listens for board from a peer host
+	Endpoint listenEndpoint; //Endpoint that listens for a board from a peer host
+
+	/**
+	 * Maps whiteboard name to endpoints of all peers listening to the whiteboard
+	 */
+	Map<String, Endpoint> listeningPeers=new HashMap<>();
 	
 	/*
 	 * GUI objects, you probably don't need to modify these things... you don't
@@ -216,6 +221,7 @@ public class WhiteboardApp {
 		whiteboards=new HashMap<>();
 		this.whiteboardServerPort = whiteboardServerPort;
 		this.whiteboardServerHost = whiteboardServerHost;
+		this.peerport = whiteboardServerHost+":"+peerPort; //Since threads are local, serverIP = peerIP
 		this.peerManager = new PeerManager(peerPort);
 		startPeerManager();
 		show(peerport);
@@ -311,36 +317,7 @@ public class WhiteboardApp {
 	private void startPeerManager() {
 		peerManager.on(PeerManager.peerStarted, (args)->{
 			Endpoint endpoint = (Endpoint)args[0];
-			System.out.println("Connection from peer: "+endpoint.getOtherEndpointId());
-			System.out.println("Listening for shared boards from peer....");
-			endpoint.on(listenBoard, (args2)->{
-				String boardToListen = (String) args2[0];
-				// Start by creating board string and send it (boardData) to receiver
-				endpoint.emit(boardData, );
-				// Add endpoint to list of endpoints used to send and receive updates
-
-				// Use the same thread to send and receive updates
-				// Propagate these updates (via boardData)
-
-			}).on(unlistenBoard, (args2)->{
-				String boardToUnlisten = (String) args2[0];
-				// Remove endpoint from list of listening endpoints
-			}).on(boardPathUpdate, (args2)->{
-				String boardNameAndData = (String) args2[0]; //host:port:boardid%ver%path
-				// accept and draw path (via whiteboard.addPath) if version number is same (w/o path applied yet)
-				// emit boardPathAccepted to all endpoints listening to current board
-			}).on(boardUndoUpdate, (args2)->{
-				String boardNameAndVer = (String) args2[0];
-				// accept and undo (via whiteboard.addPath) if version number is same (w/o undo applied yet)
-				// emit boardUndoAccepted to all endpoints listening to current board
-			}).on(boardClearUpdate, (args2)->{
-				String boardNameAndVer = (String) args2[0];
-				// accept and clear (via whiteboard.addPath) if version number is same (w/o clear applied yet)
-				// emit boardClearAccepted to all endpoints listening to current board
-			}).on(boardDeleted, (args2)->{
-				String boardName = (String) args2[0];
-				// Remove endpoint from list of listening endpoints
-			});
+			onConnectionFromPeerClient(endpoint);
 		}).on(PeerManager.peerStopped,(args)->{
 			Endpoint endpoint = (Endpoint)args[0];
 			System.out.println("Disconnected from whiteboard peer: "+endpoint.getOtherEndpointId());
@@ -352,23 +329,62 @@ public class WhiteboardApp {
 			ServerManager serverManager = (ServerManager)args[0];
 			serverManager.on(IOThread.ioThread, (args2)->{
 				String peerport = (String) args2[0];
-				this.peerport = peerport;
-				log.info(peerport +" successfully established peer server");
-				try {
-					indexClientManager = peerManager.connect(whiteboardServerPort, whiteboardServerHost);
-					shareBoards(indexClientManager);
-				} catch (InterruptedException e) {
-					System.out.println("Interrupted while trying to listen from index server.");
-				} catch (UnknownHostException e) {
-					System.out.println("Unable to locate index server while trying to listen from it.");
-				}
+				onPeerStartup(peerport);
 			});
 		});
 		peerManager.start();
 	}
 
+	/**
+	 *
+	 * @param peerport: IP of peer host
+	 */
+	private void onPeerStartup(String peerport){
+		log.info(peerport +" successfully established as peer host.");
+		try {
+			indexClientManager = peerManager.connect(whiteboardServerPort, whiteboardServerHost);
+			shareBoards(indexClientManager);
+		} catch (InterruptedException e) {
+			System.out.println("Interrupted while trying to listen from whiteboard server.");
+		} catch (UnknownHostException e) {
+			System.out.println("Unable to locate whiteboard server while trying to listen from it.");
+		}
+	}
 	
 	// From whiteboard server
+	/**
+	 * Peer action upon starting connection with whiteboard server
+	 */
+	private void onConnectionWithServer(Endpoint endpoint) {
+		System.out.println("Connected to whiteboard server: " + endpoint.getOtherEndpointId());
+		System.out.println("Listening to boards shared....");
+		endpoint.on(WhiteboardServer.error, (args2) -> {
+			String errorMessage = (String) args2[0];
+			System.out.println("Whiteboard server failed to share board: "
+					+ errorMessage);
+		}).on(WhiteboardServer.sharingBoard, (args2)-> {
+			String sharedBoardName = (String) args2[0];
+			// create an empty remote board if not in whiteboards list, request from peer only upon board selection
+			if (!whiteboards.containsKey(sharedBoardName)){
+				System.out.println("Received shared board: "+ sharedBoardName);
+				Whiteboard whiteboard = new Whiteboard(sharedBoardName,true);
+				addBoard(whiteboard,false);
+			} else {
+				// Peer is owner of board, or already had this board in menu, do nothing
+			}
+		}).on(WhiteboardServer.unsharingBoard, (args2)-> {
+			String unsharedBoardName = (String) args2[0];
+			System.out.println("Received unshared board: "+unsharedBoardName);
+			// remove a remote board if not in whiteboards list
+			if (whiteboards.containsKey(unsharedBoardName)){
+				deleteBoard(unsharedBoardName);
+			} else {
+				//Board does not exist, log info and do nothing
+				log.info("The unshared board is not present in peer. Continuing...");
+			}
+		});
+	}
+
 	/**
 	 * Subscribe to boards shared from the index server
 	 */
@@ -376,37 +392,17 @@ public class WhiteboardApp {
 		clientManager.on(PeerManager.peerStarted, (args)-> {
 			Endpoint endpoint = (Endpoint) args[0];
 			this.indexEndpoint = endpoint;
-			System.out.println("Connected to whiteboard server: " + endpoint.getOtherEndpointId());
-			System.out.println("Listening to boards shared....");
-			endpoint.on(WhiteboardServer.error, (args2) -> {
-				String errorMessage = (String) args2[0];
-				System.out.println("Whiteboard server failed to share board: "
-						+ errorMessage);
-			}).on(WhiteboardServer.sharingBoard, (args2)-> {
-				String sharedBoardName = (String) args2[0];
-				// Create a thread and request board data from peer
-				getBoardDataFromPeer(sharedBoardName);
-			}).on(WhiteboardServer.unsharingBoard, (args2)-> {
-				String unsharedBoardName = (String) args2[0];
-				System.out.println("Received unshared board: "+unsharedBoardName);
-				// remove a remote board if not in whiteboards list
-				if (whiteboards.containsKey(unsharedBoardName)){
-					deleteBoard(unsharedBoardName);
-				} else {
-					//Board does not exist, log info and do nothing
-					log.info("The unshared board is not present in peer. Continuing...");
-				}
-			});
+			onConnectionWithServer(indexEndpoint);
 		}).on(WhiteboardServer.error, (args)->{
 			String rejectedBoardName = (String) args[0];
 			System.out.println("Whiteboard server failed to (un)share board: "
 					+rejectedBoardName);
 		}).on(PeerManager.peerStopped, (args)->{
 			Endpoint endpoint = (Endpoint)args[0];
-			System.out.println("Disconnected from the index server: "+endpoint.getOtherEndpointId());
+			System.out.println("Disconnected from the whiteboard server: "+endpoint.getOtherEndpointId());
 		}).on(PeerManager.peerError, (args)->{
 			Endpoint endpoint = (Endpoint)args[0];
-			System.out.println("There was an error communicating with the index server: "
+			System.out.println("There was an error communicating with the whiteboard server: "
 					+endpoint.getOtherEndpointId());
 		});
 		clientManager.start();
@@ -433,17 +429,16 @@ public class WhiteboardApp {
 
 
 	// From whiteboard peer
-
 	/**
 	 * Connect to whiteboard peer that is hosting the shared board and obtain board info
-	 *
-	 * @param boardName Board shared by another peer, peer:port:boardid
+	 * @param boardName Board shared by peer host, peer:port:boardid
 	 */
 	private void getBoardDataFromPeer(String boardName){
 		String host = getIP(boardName) + ":" + getPort(boardName); // For logging purposes
 		ClientManager clientManager;
 		try {
 			clientManager = peerManager.connect(getPort(boardName), getIP(boardName));
+			this.listenClientManager = clientManager;
 		} catch (InterruptedException e) {
 			System.out.println("Interrupted while trying to connect to peer host: "+host);
 			return;
@@ -454,42 +449,81 @@ public class WhiteboardApp {
 		clientManager.on(PeerManager.peerStarted, (args)->{
 			Endpoint endpoint = (Endpoint)args[0];
 			System.out.println("Connected to host peer: "+endpoint.getOtherEndpointId());
-			endpoint.on(boardData,(args2)->{
-				// something something
-			}).on(boardDeleted, (args2)->{
-				String deletedBoardName = (String) args2[0];
-				System.out.println("Host peer deleted board: "+deletedBoardName );
-				clientManager.shutdown();
-			}).on(boardError, (args2)->{
-				System.out.println("Error receiving board data");
-				clientManager.shutdown();
-			});
-			System.out.println("Getting board "+boardName+" from "+endpoint.getOtherEndpointId());
-			// create a remote board if not in whiteboards list
-			if (!whiteboards.containsKey(boardName)){
-				System.out.println("Received shared board: "+ boardName);
-				Whiteboard whiteboard = new Whiteboard(boardName,true);
-				addBoard(whiteboard,false);
-			} else {
-				// Peer is owner of board, or already has board, do nothing
-			}
-			// If board is selected, emit listening event
-			System.out.println("Listening to board from host peer: "+ boardName);
-			endpoint.emit(listenBoard, boardName);
-			System.out.println("Requesting board data from host peer: "+ boardName);
-			endpoint.emit(getBoardData, boardName);
+			this.listenEndpoint = endpoint;
+			onConnectionToPeerHost(clientManager, listenEndpoint, boardName);
 		}).on(PeerManager.peerStopped, (args)->{
 			Endpoint endpoint = (Endpoint)args[0];
-			System.out.println("Disconnected from peer: "+endpoint.getOtherEndpointId());
+			System.out.println("Disconnected from peer host: "+endpoint.getOtherEndpointId());
 		}).on(PeerManager.peerError, (args)->{
 			Endpoint endpoint = (Endpoint)args[0];
-			System.out.println("There was error while communication with peer: "
+			System.out.println("There was error while communication with peer host: "
 					+endpoint.getOtherEndpointId());
 		});
 		clientManager.start();
 	}
 
+	/**
+	 * Peer action upon starting connection with peer host
+	 * @param clientManager: clientManager responsible for connection to peer host
+	 * @param endpoint: endpoint responsible for connection to peer host
+	 * @param boardName: Board shared by peer host, peer:port:boardid
+	 */
+	private void onConnectionToPeerHost(ClientManager clientManager,
+										Endpoint endpoint, String boardName){
+		endpoint.on(boardData,(args2)->{
 
+		}).on(boardDeleted, (args2)->{
+			String deletedBoardName = (String) args2[0];
+			System.out.println("Host peer deleted board: "+deletedBoardName );
+			clientManager.shutdown();
+		}).on(boardError, (args2)->{
+			System.out.println("Error receiving board data");
+			clientManager.shutdown();
+		});
+		System.out.println("Getting board "+boardName+" from "+endpoint.getOtherEndpointId());
+		// If board is selected, emit listening event
+		System.out.println("Listening to board from peer host: "+ boardName);
+		endpoint.emit(listenBoard, boardName);
+		System.out.println("Requesting board data from peer host: "+ boardName);
+		endpoint.emit(getBoardData, boardName);
+	}
+
+	/**
+	 * Actions taken by peer host upon connection from client to listen to a board
+	 * @param endpoint: endpoint responsible for connection to peer client
+	 */
+	private void onConnectionFromPeerClient(Endpoint endpoint){
+		System.out.println("Connection from peer: "+endpoint.getOtherEndpointId());
+		System.out.println("Listening for shared boards from peer....");
+		endpoint.on(listenBoard, (args2)->{
+			String boardToListen = (String) args2[0];
+			// Start by creating board string and send it (boardData) to receiver
+			endpoint.emit(boardData, );
+			// Add endpoint to list of endpoints used to send and receive updates
+
+			// Use the same thread to send and receive updates
+			// Propagate these updates (via boardData)
+
+		}).on(unlistenBoard, (args2)->{
+			String boardToUnlisten = (String) args2[0];
+			// Remove endpoint from list of listening endpoints
+		}).on(boardPathUpdate, (args2)->{
+			String boardNameAndData = (String) args2[0]; //host:port:boardid%ver%path
+			// accept and draw path (via whiteboard.addPath) if version number is same (w/o path applied yet)
+			// emit boardPathAccepted to all endpoints listening to current board
+		}).on(boardUndoUpdate, (args2)->{
+			String boardNameAndVer = (String) args2[0];
+			// accept and undo (via whiteboard.addPath) if version number is same (w/o undo applied yet)
+			// emit boardUndoAccepted to all endpoints listening to current board
+		}).on(boardClearUpdate, (args2)->{
+			String boardNameAndVer = (String) args2[0];
+			// accept and clear (via whiteboard.addPath) if version number is same (w/o clear applied yet)
+			// emit boardClearAccepted to all endpoints listening to current board
+		}).on(boardDeleted, (args2)->{
+			String boardName = (String) args2[0];
+			// Remove endpoint from list of listening endpoints
+		});
+	}
 
 	/******
 	 * 
@@ -603,6 +637,15 @@ public class WhiteboardApp {
 	 */
 	public void selectedABoard() {
 		//Remote: get board data from host peer, then use thread listen to updates
+		if (selectedBoard.isRemote()){
+			getBoardDataFromPeer(selectedBoard.getName());
+		}  else {
+			// terminate client session
+			if (listenClientManager!=null){
+				listenClientManager.shutdown();
+				listenClientManager=null; // Not sure if needed, but just in case
+			}
+		}
 		drawSelectedWhiteboard();
 		log.info("selected board: "+selectedBoard.getName());
 	}
