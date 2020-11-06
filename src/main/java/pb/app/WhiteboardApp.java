@@ -488,7 +488,7 @@ public class WhiteboardApp {
 			// accept and clear (via whiteboard.addPath) if version number is same (w/o clear applied yet)
 			// emit boardClearAccepted to all endpoints listening to current board
 		}).on(boardDeleted, (args2)->{
-			//TODO
+			//TODO: bruh
 			String deletedBoardName = (String) args2[0];
 			System.out.println("Host peer deleted board: "+deletedBoardName);
 			clientManager.shutdown();
