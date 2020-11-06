@@ -189,8 +189,7 @@ public class WhiteboardApp {
 	private static String whiteboardServerHost; // default host for the index server
 
 
-
-	PeerManager peerManager;
+	PeerManager peerManager; // Manages all connections
 	ClientManager indexClientManager; // Client manager that connects to index server
 	Endpoint indexEndpoint; // Endpoint that connects to the index server
 	ClientManager listenClientManager; // Client manager that listens for board from a peer host
@@ -199,7 +198,7 @@ public class WhiteboardApp {
 	/**
 	 * Maps whiteboard name to endpoints of all peers listening to the whiteboard
 	 */
-	Map<String, Endpoint> listeningPeers=new HashMap<>();
+	Map<String, Set<Endpoint>> listeningPeers;
 	
 	/*
 	 * GUI objects, you probably don't need to modify these things... you don't
@@ -219,6 +218,7 @@ public class WhiteboardApp {
 	public WhiteboardApp(int peerPort,String whiteboardServerHost, 
 			int whiteboardServerPort) {
 		whiteboards=new HashMap<>();
+		listeningPeers=new HashMap<>();
 		this.whiteboardServerPort = whiteboardServerPort;
 		this.whiteboardServerHost = whiteboardServerHost;
 		this.peerport = whiteboardServerHost+":"+peerPort; //Since threads are local, serverIP = peerIP
@@ -471,7 +471,8 @@ public class WhiteboardApp {
 	private void onConnectionToPeerHost(ClientManager clientManager,
 										Endpoint endpoint, String boardName){
 		endpoint.on(boardData,(args2)->{
-
+			String receivedData = (String) args2[0];
+			onBoardData(receivedData);
 		}).on(boardDeleted, (args2)->{
 			String deletedBoardName = (String) args2[0];
 			System.out.println("Host peer deleted board: "+deletedBoardName );
@@ -489,6 +490,18 @@ public class WhiteboardApp {
 	}
 
 	/**
+	 * Method to call upon receiving boardData event, involves board initialisation
+	 * @param boardNameAndData: string received through boardData event
+	 */
+	private void onBoardData(String boardNameAndData){
+		// Initialise board
+		String boardName = getBoardName(boardNameAndData);
+		String boardData = getBoardData(boardNameAndData);
+		Whiteboard boardToInitialise = whiteboards.get(boardName);
+		boardToInitialise.whiteboardFromString(boardName, boardData);
+	}
+
+	/**
 	 * Actions taken by peer host upon connection from client to listen to a board
 	 * @param endpoint: endpoint responsible for connection to peer client
 	 */
@@ -497,16 +510,15 @@ public class WhiteboardApp {
 		System.out.println("Listening for shared boards from peer....");
 		endpoint.on(listenBoard, (args2)->{
 			String boardToListen = (String) args2[0];
-			// Start by creating board string and send it (boardData) to receiver
-			endpoint.emit(boardData, );
-			// Add endpoint to list of endpoints used to send and receive updates
-
-			// Use the same thread to send and receive updates
-			// Propagate these updates (via boardData)
-
+			onBoardListen(boardToListen, endpoint);
 		}).on(unlistenBoard, (args2)->{
 			String boardToUnlisten = (String) args2[0];
 			// Remove endpoint from list of listening endpoints
+
+		}).on(getBoardData, (args2)->{
+			String boardToGet = (String) args2[0];
+			// Convert board to string
+			onGetBoardData(boardToGet, endpoint);
 		}).on(boardPathUpdate, (args2)->{
 			String boardNameAndData = (String) args2[0]; //host:port:boardid%ver%path
 			// accept and draw path (via whiteboard.addPath) if version number is same (w/o path applied yet)
@@ -523,6 +535,36 @@ public class WhiteboardApp {
 			String boardName = (String) args2[0];
 			// Remove endpoint from list of listening endpoints
 		});
+	}
+
+
+	/**
+	 * Add endpoint to list of endpoints currently listening to the board
+	 * @param boardName: Name of board to be listened
+	 * @param endpoint: Endpoint used to communicate with client listening to board
+	 */
+	private void onBoardListen(String boardName, Endpoint endpoint){
+		log.info("Adding to list of boards available for listening: "+boardName);
+		synchronized (listeningPeers) {
+			if (listeningPeers.containsKey(boardName)) {
+				Set<Endpoint> activeEndpoints = listeningPeers.get(boardName);
+				activeEndpoints.add(endpoint);
+			} else {
+				Set<Endpoint> activeEndpoints = new HashSet<Endpoint>();
+				activeEndpoints.add(endpoint);
+				listeningPeers.put(boardName, activeEndpoints);
+			}
+		}
+	}
+
+	/**
+	 * Creating board string and send it (boardData) to receiver
+	 * @param boardName: Name corresponding to board of interest
+	 * @param endpoint: Endpoint that emits to peer
+	 */
+	private void onGetBoardData(String boardName, Endpoint endpoint){
+		Whiteboard boardToGet = whiteboards.get(boardName);
+		endpoint.emit(boardData, boardToGet.toString());
 	}
 
 	/******
