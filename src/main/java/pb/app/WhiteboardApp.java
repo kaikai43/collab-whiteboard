@@ -475,7 +475,7 @@ public class WhiteboardApp {
 			onBoardData(receivedData);
 		}).on(boardDeleted, (args2)->{
 			String deletedBoardName = (String) args2[0];
-			System.out.println("Host peer deleted board: "+deletedBoardName );
+			System.out.println("Host peer deleted board: "+deletedBoardName);
 			clientManager.shutdown();
 		}).on(boardError, (args2)->{
 			System.out.println("Error receiving board data");
@@ -499,6 +499,8 @@ public class WhiteboardApp {
 		String boardData = getBoardData(boardNameAndData);
 		Whiteboard boardToInitialise = whiteboards.get(boardName);
 		boardToInitialise.whiteboardFromString(boardName, boardData);
+		drawSelectedWhiteboard();
+		log.info("selected board: "+selectedBoard.getName());
 	}
 
 	/**
@@ -514,7 +516,7 @@ public class WhiteboardApp {
 		}).on(unlistenBoard, (args2)->{
 			String boardToUnlisten = (String) args2[0];
 			// Remove endpoint from list of listening endpoints
-
+			onBoardUnlisten(boardToUnlisten, endpoint);
 		}).on(getBoardData, (args2)->{
 			String boardToGet = (String) args2[0];
 			// Convert board to string
@@ -558,12 +560,32 @@ public class WhiteboardApp {
 	}
 
 	/**
+	 * Remove endpoint to list of endpoints currently listening to the board
+	 * @param boardName: Name of board to be listened
+	 * @param endpoint: Endpoint used to communicate with client listening to board
+	 */
+	private void onBoardUnlisten(String boardName, Endpoint endpoint){
+		log.info("Removing from endpoint from list of active endpoints: "+boardName);
+		synchronized (listeningPeers) {
+			if (listeningPeers.containsKey(boardName)) {
+				Set<Endpoint> activeEndpoints = listeningPeers.get(boardName);
+				activeEndpoints.remove(endpoint);
+			} else {
+				// Trying to remove endpoint that doesnt exist
+				endpoint.emit(boardError, "Endpoint does not exist in list of active endpoints.");
+			}
+		}
+	}
+
+	/**
 	 * Creating board string and send it (boardData) to receiver
 	 * @param boardName: Name corresponding to board of interest
 	 * @param endpoint: Endpoint that emits to peer
 	 */
 	private void onGetBoardData(String boardName, Endpoint endpoint){
 		Whiteboard boardToGet = whiteboards.get(boardName);
+		System.out.println("Transmitting board data: " + boardName
+				+ " to peer: "+ endpoint.getOtherEndpointId());
 		endpoint.emit(boardData, boardToGet.toString());
 	}
 
@@ -682,14 +704,16 @@ public class WhiteboardApp {
 		if (selectedBoard.isRemote()){
 			getBoardDataFromPeer(selectedBoard.getName());
 		}  else {
-			// terminate client session
+			// Emit unlisten event and terminate previous client session
 			if (listenClientManager!=null){
+				listenEndpoint.emit(unlistenBoard, selectedBoard.getName());
 				listenClientManager.shutdown();
 				listenClientManager=null; // Not sure if needed, but just in case
 			}
+			drawSelectedWhiteboard();
+			log.info("selected board: "+selectedBoard.getName());
 		}
-		drawSelectedWhiteboard();
-		log.info("selected board: "+selectedBoard.getName());
+
 	}
 	
 	/**
