@@ -304,6 +304,15 @@ public class WhiteboardApp {
 		String[] parts=data.split(":");
 		return Integer.parseInt(parts[1]);
 	}
+
+	/**
+	 *
+	 * @param data = peer:port:boardid%version%PATHS
+	 * @return peer:port:boardid%version
+	 */
+	public static String getNameAndVersion(String data) {
+		return getBoardName(data) + "%" + getBoardVersion(data) + "%";
+	}
 	
 	/******
 	 * 
@@ -481,8 +490,7 @@ public class WhiteboardApp {
 			onBoardPathAccepted(boardNameAndData);
 		}).on(boardUndoAccepted, (args2)->{
 			String boardNameAndVer = (String) args2[0];
-			// accept and undo (via whiteboard.addPath) if version number is same (w/o undo applied yet)
-			// emit boardUndoAccepted to all endpoints listening to current board
+			onBoardUndoAccepted(boardNameAndVer);
 		}).on(boardClearAccepted, (args2)->{
 			String boardNameAndVer = (String) args2[0];
 			// accept and clear (via whiteboard.addPath) if version number is same (w/o clear applied yet)
@@ -534,6 +542,17 @@ public class WhiteboardApp {
 		}
 	}
 
+	private void onBoardUndoAccepted(String boardNameAndVer){
+		String boardName = getBoardName(boardNameAndVer);
+		Long boardVer = getBoardVersion(boardNameAndVer);
+		Whiteboard boardToUpdate = whiteboards.get(boardName);
+		boardToUpdate.undo(--boardVer);
+		// Redraw board if selected
+		if (selectedBoard == boardToUpdate) {
+			drawSelectedWhiteboard();
+		}
+	}
+
 	/**
 	 * Actions taken by peer host upon connection from client to listen to a board
 	 * @param endpoint: endpoint responsible for connection to peer client
@@ -552,11 +571,10 @@ public class WhiteboardApp {
 			onGetBoardData(boardToGet, endpoint); // Convert board to string and send to listening client
 		}).on(boardPathUpdate, (args2)->{
 			String boardNameAndData = (String) args2[0];
-			onBoardPathUpdate(boardNameAndData, endpoint);
+			onBoardPathUpdate(boardNameAndData, endpoint); // Add path to hosted board and transmit to all listeners
 		}).on(boardUndoUpdate, (args2)->{
 			String boardNameAndVer = (String) args2[0];
-			// accept and undo (via whiteboard.addPath) if version number is same (w/o undo applied yet)
-			// emit boardUndoAccepted to all endpoints listening to current board
+			onBoardUndoUpdate(boardNameAndVer, endpoint); // Undo hosted board and transmit to all listeners
 		}).on(boardClearUpdate, (args2)->{
 			String boardNameAndVer = (String) args2[0];
 			// accept and clear (via whiteboard.addPath) if version number is same (w/o clear applied yet)
@@ -644,7 +662,36 @@ public class WhiteboardApp {
 						}
 					}
 				} else {
-					endpoint.emit(boardError, "Version mismatch with host peer!");
+					endpoint.emit(boardError, "Version mismatch with host peer for board add path!");
+				}
+			}
+		}
+	}
+
+	private void onBoardUndoUpdate(String boardNameAndVer, Endpoint endpoint){
+		String boardName = getBoardName(boardNameAndVer);
+		Long updatedBoardVersion = getBoardVersion(boardNameAndVer);
+		synchronized (listeningPeers){
+			if (!listeningPeers.containsKey(boardName)){
+				System.out.println("Peer client undo-ed a board that is not shared!");
+			} else {
+				Whiteboard boardToUpdate = whiteboards.get(boardName);
+				// If hosted board version one less than updated version
+				// undo and transmit to all listening peers
+				if (boardToUpdate.undo(--updatedBoardVersion)) {
+					// Redraw board if selected
+					if (selectedBoard==boardToUpdate) {
+						drawSelectedWhiteboard();
+					}
+					Set<Endpoint> activeEndpoints = listeningPeers.get(boardName);
+					for (Endpoint e: activeEndpoints){
+						// Skip transmission to peer client that first sent the update
+						if (e != endpoint){
+							e.emit(boardUndoAccepted, boardNameAndVer);
+						}
+					}
+				} else {
+					endpoint.emit(boardError, "Version mismatch with host peer for board undo!");
 				}
 			}
 		}
@@ -761,9 +808,23 @@ public class WhiteboardApp {
 		if(selectedBoard!=null) {
 			if(!selectedBoard.undo(selectedBoard.getVersion())) {
 				// some other peer modified the board in between
+				System.out.println("Another peer modified the board while drawing." +
+						"Rejecting undo and redrawing board according to modification.");
 				drawSelectedWhiteboard();
 			} else {
-				
+				// If is a remote board, emit undo-ed board info to host peer
+				String boardNameAndVer = getNameAndVersion(selectedBoard.toString());
+				if (selectedBoard.isRemote()) {
+					listenEndpoint.emit(boardUndoUpdate, boardNameAndVer);
+				} else if (listeningPeers.containsKey(selectedBoard.getName())) {
+					// If is board hosted by peer, emit boardUndoAcccepted to all listening peers
+					Set<Endpoint> activeEndpoints = listeningPeers.get(selectedBoard.getName());
+					if (!activeEndpoints.isEmpty()) {
+						for (Endpoint e: activeEndpoints){
+							e.emit(boardUndoAccepted, boardNameAndVer);
+						}
+					}
+				}
 				drawSelectedWhiteboard();
 			}
 		} else {
