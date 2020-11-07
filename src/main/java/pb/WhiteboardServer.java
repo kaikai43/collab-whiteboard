@@ -224,7 +224,9 @@ public class WhiteboardServer {
 				// Pass on boardName to other clients
 				log.info("Transmitting board share to all connected peers.");
 				for(Endpoint e: endpoints){
-					e.emit(sharingBoard, boardName);
+					if (e != endpoint) {
+						e.emit(sharingBoard, boardName);
+					}
 				}
 			}).on(unshareBoard, (eventArgs2)->{
 				String boardName = (String) eventArgs2[0];
@@ -237,7 +239,9 @@ public class WhiteboardServer {
 				}
 				log.info("Transmitting board unshare to all connected peers.");
 				for(Endpoint e: endpoints){
-					e.emit(unsharingBoard, boardName);
+					if (e != endpoint) { // Skip sending to host of board
+						e.emit(unsharingBoard, boardName);
+					}
 				}
 			});
 			// Sharing currently share boards to newly connected clients
