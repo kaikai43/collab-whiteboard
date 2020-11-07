@@ -431,12 +431,12 @@ public class WhiteboardApp {
 	}
 
 	/**
-	 * Emit shared board event using endpoint connected to index server
+	 * Emit unshared board event using endpoint connected to index server
 	 */
 	private void uploadUnsharedBoard(String boardName, String peerport) {
 		System.out.println("Transmitting unshared board: "+ boardName +" to whiteboard server.");
 		indexEndpoint.emit(WhiteboardServer.unshareBoard, boardName);
-		log.info("Peer " + peerport + " successfully shared board "+boardName);
+		log.info("Peer " + peerport + " successfully unshared board "+boardName);
 	}
 
 
@@ -495,7 +495,6 @@ public class WhiteboardApp {
 			String boardNameAndVer = (String) args2[0];
 			onBoardClearAccepted(boardNameAndVer);
 		}).on(boardDeleted, (args2)->{
-			//TODO: bruh
 			String deletedBoardName = (String) args2[0];
 			System.out.println("Host peer deleted board: "+deletedBoardName);
 			clientManager.shutdown();
@@ -574,6 +573,23 @@ public class WhiteboardApp {
 			drawSelectedWhiteboard();
 		}
 	}
+
+	/**
+	 * Actions taken by clients upon receiving board delete by peer host
+	 * Basically, just undo board upon receiving message from peer host
+	 *
+	 * @param boardName: String data received from peer host, host:port:boardid%version%
+	 */
+	private void onBoardDelete(String boardName){
+		//TODO
+		Whiteboard boardToUpdate = whiteboards.get(boardName);
+		boardToUpdate.clear(--boardVer);
+		// Redraw board if selected
+		if (selectedBoard == boardToUpdate) {
+			drawSelectedWhiteboard();
+		}
+	}
+
 
 	/**
 	 * Actions taken by peer host upon connection from client to listen to a board
@@ -795,6 +811,23 @@ public class WhiteboardApp {
 			if(whiteboard!=null) {
 				whiteboards.remove(boardname);
 			}
+		}
+		// If board was hosted, emit boardDeleted event to listeners and unshare board
+		synchronized(listeningPeers){
+			if (listeningPeers.containsKey(boardname)){
+				Set<Endpoint> activeEndpoints = listeningPeers.get(boardname);
+				if (!activeEndpoints.isEmpty()){
+					for (Endpoint e: activeEndpoints){
+						e.emit(boardDeleted, boardname);
+					}
+				}
+				// Unshare board from whiteboard server
+				uploadUnsharedBoard(boardname, peerport);
+				// Remove from list of boards shared
+				listeningPeers.remove(boardname);
+			}
+
+
 		}
 		updateComboBox(null);
 	}
