@@ -330,6 +330,7 @@ public class WhiteboardApp {
 		}).on(PeerManager.peerStopped,(args)->{
 			Endpoint endpoint = (Endpoint)args[0];
 			System.out.println("Disconnected from whiteboard peer: "+endpoint.getOtherEndpointId());
+			
 		}).on(PeerManager.peerError,(args)->{
 			Endpoint endpoint = (Endpoint)args[0];
 			System.out.println("There was an error communicating with the whiteboard peer: "
@@ -496,8 +497,7 @@ public class WhiteboardApp {
 			onBoardClearAccepted(boardNameAndVer);
 		}).on(boardDeleted, (args2)->{
 			String deletedBoardName = (String) args2[0];
-			System.out.println("Host peer deleted board: "+deletedBoardName);
-			clientManager.shutdown();
+			clientOnBoardDeleted(deletedBoardName, clientManager);
 		}).on(boardError, (args2)->{
 			System.out.println("Error receiving board data");
 			clientManager.shutdown();
@@ -576,18 +576,15 @@ public class WhiteboardApp {
 
 	/**
 	 * Actions taken by clients upon receiving board delete by peer host
-	 * Basically, just undo board upon receiving message from peer host
+	 * Delete board upon receiving message from peer host and terminate thread connection
 	 *
-	 * @param boardName: String data received from peer host, host:port:boardid%version%
+	 * @param boardName: boardName received from peer host, host:port:boardid
+	 * @param clientManager: thread responsible for connection to peer host
 	 */
-	private void onBoardDelete(String boardName){
-		//TODO
-		Whiteboard boardToUpdate = whiteboards.get(boardName);
-		boardToUpdate.clear(--boardVer);
-		// Redraw board if selected
-		if (selectedBoard == boardToUpdate) {
-			drawSelectedWhiteboard();
-		}
+	private void clientOnBoardDeleted(String boardName, ClientManager clientManager){
+		System.out.println("Host peer deleted board: "+boardName);
+		deleteBoard(boardName);
+		clientManager.shutdown();
 	}
 
 
@@ -616,9 +613,6 @@ public class WhiteboardApp {
 		}).on(boardClearUpdate, (args2)->{
 			String boardNameAndVer = (String) args2[0];
 			onBoardClearUpdate(boardNameAndVer, endpoint); // Clear hosted board and transmit to all listeners
-		}).on(boardDeleted, (args2)->{
-			String boardName = (String) args2[0];
-			// Remove endpoint from list of listening endpoints
 		});
 	}
 
@@ -811,6 +805,9 @@ public class WhiteboardApp {
 			if(whiteboard!=null) {
 				whiteboards.remove(boardname);
 			}
+			if (whiteboard == selectedBoard && whiteboard.isRemote()){
+
+			}
 		}
 		// If board was hosted, emit boardDeleted event to listeners and unshare board
 		synchronized(listeningPeers){
@@ -826,8 +823,6 @@ public class WhiteboardApp {
 				// Remove from list of boards shared
 				listeningPeers.remove(boardname);
 			}
-
-
 		}
 		updateComboBox(null);
 	}
