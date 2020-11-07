@@ -330,7 +330,6 @@ public class WhiteboardApp {
 		}).on(PeerManager.peerStopped,(args)->{
 			Endpoint endpoint = (Endpoint)args[0];
 			System.out.println("Disconnected from whiteboard peer: "+endpoint.getOtherEndpointId());
-			
 		}).on(PeerManager.peerError,(args)->{
 			Endpoint endpoint = (Endpoint)args[0];
 			System.out.println("There was an error communicating with the whiteboard peer: "
@@ -360,7 +359,31 @@ public class WhiteboardApp {
 			System.out.println("Unable to locate whiteboard server while trying to listen from it.");
 		}
 	}
-	
+
+	/**
+	 * Subscribe to boards shared from the index server
+	 */
+	private void shareBoards(ClientManager clientManager) {
+		clientManager.on(PeerManager.peerStarted, (args)-> {
+			Endpoint endpoint = (Endpoint) args[0];
+			this.indexEndpoint = endpoint;
+			onConnectionWithServer(indexEndpoint);
+		}).on(WhiteboardServer.error, (args)->{
+			String rejectedBoardName = (String) args[0];
+			System.out.println("Whiteboard server failed to (un)share board: "
+					+rejectedBoardName);
+		}).on(PeerManager.peerStopped, (args)->{
+			Endpoint endpoint = (Endpoint)args[0];
+			System.out.println("Disconnected from the whiteboard server: "+endpoint.getOtherEndpointId());
+		}).on(PeerManager.peerError, (args)->{
+			Endpoint endpoint = (Endpoint)args[0];
+			System.out.println("There was an error communicating with the whiteboard server: "
+					+endpoint.getOtherEndpointId());
+		});
+		clientManager.start();
+		// Thread doesnt end until peerManager.shutdown() called, no need to .join()
+	}
+
 	// From whiteboard server
 	/**
 	 * Peer action upon starting connection with whiteboard server
@@ -395,29 +418,7 @@ public class WhiteboardApp {
 		});
 	}
 
-	/**
-	 * Subscribe to boards shared from the index server
-	 */
-	private void shareBoards(ClientManager clientManager) {
-		clientManager.on(PeerManager.peerStarted, (args)-> {
-			Endpoint endpoint = (Endpoint) args[0];
-			this.indexEndpoint = endpoint;
-			onConnectionWithServer(indexEndpoint);
-		}).on(WhiteboardServer.error, (args)->{
-			String rejectedBoardName = (String) args[0];
-			System.out.println("Whiteboard server failed to (un)share board: "
-					+rejectedBoardName);
-		}).on(PeerManager.peerStopped, (args)->{
-			Endpoint endpoint = (Endpoint)args[0];
-			System.out.println("Disconnected from the whiteboard server: "+endpoint.getOtherEndpointId());
-		}).on(PeerManager.peerError, (args)->{
-			Endpoint endpoint = (Endpoint)args[0];
-			System.out.println("There was an error communicating with the whiteboard server: "
-					+endpoint.getOtherEndpointId());
-		});
-		clientManager.start();
-		// Thread doesnt end until peerManager.shutdown() called, no need to .join()
-	}
+
 
 	/**
 	 * Emit shared board event using endpoint connected to index server
@@ -497,7 +498,7 @@ public class WhiteboardApp {
 			onBoardClearAccepted(boardNameAndVer);
 		}).on(boardDeleted, (args2)->{
 			String deletedBoardName = (String) args2[0];
-			clientOnBoardDeleted(deletedBoardName, clientManager);
+			clientOnBoardDeleted(deletedBoardName, endpoint);
 		}).on(boardError, (args2)->{
 			System.out.println("Error receiving board data");
 			clientManager.shutdown();
@@ -576,15 +577,14 @@ public class WhiteboardApp {
 
 	/**
 	 * Actions taken by clients upon receiving board delete by peer host
-	 * Delete board upon receiving message from peer host and terminate thread connection
+	 * Basically just logs the information, as a delete message will be followed by unshare
 	 *
 	 * @param boardName: boardName received from peer host, host:port:boardid
-	 * @param clientManager: thread responsible for connection to peer host
+	 * @param endpoint: thread responsible for connection to peer host
 	 */
-	private void clientOnBoardDeleted(String boardName, ClientManager clientManager){
-		System.out.println("Host peer deleted board: "+boardName);
-		deleteBoard(boardName);
-		clientManager.shutdown();
+	private void clientOnBoardDeleted(String boardName, Endpoint endpoint){
+		System.out.println("Host peer "+endpoint.getOtherEndpointId()+
+				" has deleted board:" + boardName);
 	}
 
 
@@ -613,6 +613,10 @@ public class WhiteboardApp {
 		}).on(boardClearUpdate, (args2)->{
 			String boardNameAndVer = (String) args2[0];
 			onBoardClearUpdate(boardNameAndVer, endpoint); // Clear hosted board and transmit to all listeners
+		}).on(boardDeleted, (args2)-> {
+			String boardName = (String) args2[0];
+			// Do nothing, log the information
+			hostOnBoardDeleted(boardName, endpoint);
 		});
 	}
 
@@ -644,9 +648,6 @@ public class WhiteboardApp {
 			if (listeningPeers.containsKey(boardName)) {
 				Set<Endpoint> activeEndpoints = listeningPeers.get(boardName);
 				activeEndpoints.remove(endpoint);
-			} else {
-				// Trying to remove endpoint that doesnt exist
-				endpoint.emit(boardError, "Endpoint does not exist in list of active endpoints.");
 			}
 		}
 	}
@@ -767,6 +768,18 @@ public class WhiteboardApp {
 		}
 	}
 
+	/**
+	 * Actions taken by host peer upon receiving board delete by peer client
+	 * Basically just logs the information, as a delete message will be followed by unlisten
+	 *
+	 * @param boardName: boardName received from peer client, client:port:boardid
+	 * @param endpoint: thread responsible for connection to peer client
+	 */
+	private void hostOnBoardDeleted(String boardName, Endpoint endpoint){
+		System.out.println("Client peer "+endpoint.getOtherEndpointId()+
+				" has deleted board:" + boardName);
+	}
+
 	/******
 	 * 
 	 * Methods to manipulate data locally. Distributed systems related code has been
@@ -806,18 +819,13 @@ public class WhiteboardApp {
 				whiteboards.remove(boardname);
 			}
 			if (whiteboard == selectedBoard && whiteboard.isRemote()){
-
+				listenEndpoint.emit(boardDeleted,boardname);
+				listenEndpoint.emit(unlistenBoard, boardname); // Tell peer host we are unlistening
 			}
 		}
 		// If board was hosted, emit boardDeleted event to listeners and unshare board
 		synchronized(listeningPeers){
 			if (listeningPeers.containsKey(boardname)){
-				Set<Endpoint> activeEndpoints = listeningPeers.get(boardname);
-				if (!activeEndpoints.isEmpty()){
-					for (Endpoint e: activeEndpoints){
-						e.emit(boardDeleted, boardname);
-					}
-				}
 				// Unshare board from whiteboard server
 				uploadUnsharedBoard(boardname, peerport);
 				// Remove from list of boards shared
@@ -979,8 +987,7 @@ public class WhiteboardApp {
 			deleteBoard(board.getName());
 		});
     	whiteboards.values().forEach((whiteboard)->{
-    		//Unshare currently shared boards
-			uploadUnsharedBoard(whiteboard.getName(), peerport);
+
 		});
     	peerManager.shutdown();
 		Utils.getInstance().cleanUp();
