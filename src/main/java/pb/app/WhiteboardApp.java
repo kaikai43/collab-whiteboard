@@ -989,8 +989,7 @@ public class WhiteboardApp {
     	whiteboards.values().forEach((whiteboard)->{
 
 		});
-    	peerManager.shutdown();
-		Utils.getInstance().cleanUp();
+    	indexClientManager.shutdown(); // should terminate program cleanly
 	}
 	
 	
