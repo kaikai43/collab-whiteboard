@@ -1,6 +1,6 @@
 package pb;
 
-import java.io.File;
+/*import java.io.File;*/
 import java.io.BufferedReader;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
@@ -217,7 +217,7 @@ public class FileSharingPeer {
 						"string format is invalid, should be PeerIP:PeerPort:Filename)");
 			});
 			// Check if file exists before emitting index updates
-			for (String filename : filenames){
+			/*for (String filename : filenames){
 				File file = new File(filename);
 				System.out.println("Getting "+filename);
 				if (!file.exists()){
@@ -226,7 +226,7 @@ public class FileSharingPeer {
 					clientManager.shutdown();
 					return;
 				}
-			}
+			}*/
 			// Emit Index updates if filenames exist
 			emitIndexUpdate(peerport, filenames, endpoint, clientManager);
 		}).on(PeerManager.peerStopped,(eventArgs)->{
@@ -346,9 +346,10 @@ public class FileSharingPeer {
 
 		try {
 			// Create new directory to place downloaded files
-			File file = new File(downloadDirectory);
+			/*File file = new File(downloadDirectory);
 			file.mkdir();
-			OutputStream out = new FileOutputStream(downloadDirectory+parts[2]);
+			OutputStream out = new FileOutputStream(downloadDirectory+parts[2]);*/
+			OutputStream out = new FileOutputStream(parts[2]);
 
 			/*
 			 * (ToTest)TODO for project 2B. listen for peerStarted, peerStopped and peerError events
